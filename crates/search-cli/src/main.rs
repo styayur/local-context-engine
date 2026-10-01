@@ -91,6 +91,14 @@ struct Cli {
     #[arg(long = "providers", action = ArgAction::SetTrue)]
     providers: bool,
 
+    /// Report whether the privileged index service is running.
+    #[arg(long = "service-status", action = ArgAction::SetTrue)]
+    service_status: bool,
+
+    /// Run the search through the privileged index service when it is running.
+    #[arg(long = "via-service", action = ArgAction::SetTrue)]
+    via_service: bool,
+
     /// Choose the index backend.
     #[arg(long = "backend", value_name = "auto|scan|mft-usn")]
     backend: Option<String>,
@@ -170,6 +178,38 @@ fn run(cli: &Cli) -> Result<ExitCode, LceError> {
         return renderer.print_providers(&service.provider_stats());
     }
 
+    if cli.service_status {
+        let status = service.service_status();
+        if cli.json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&status).unwrap_or_else(|_| "{}".into())
+            );
+        } else {
+            println!("index service: {}", status.describe());
+            println!("  pipe             \\\\.\\pipe\\{}", status.pipe);
+            println!("  protocol         v{}", status.protocol_version);
+            if status.available {
+                println!(
+                    "  service version  {}",
+                    status.service_version.as_deref().unwrap_or("unknown")
+                );
+                println!(
+                    "  privileged MFT   {}",
+                    match status.elevated {
+                        Some(true) => "yes",
+                        Some(false) => "no",
+                        None => "unknown",
+                    }
+                );
+                println!("  volumes          {}", status.volumes);
+            } else {
+                println!("  fallback         the in-process directory scan backend");
+            }
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+
     if cli.rebuild_index {
         return print_report(&service, &renderer, true);
     }
@@ -196,7 +236,27 @@ fn run(cli: &Cli) -> Result<ExitCode, LceError> {
             .map(|limit| limit.clamp(1, search_core::MAX_RESULT_LIMIT));
     }
 
-    let mut outcome = service.search_detailed(&input, &options);
+    // `--via-service` routes the query through the privileged service when it
+    // is running; otherwise it falls through to the in-process engine, which is
+    // the same engine the service itself uses.
+    let mut outcome = if cli.via_service {
+        match service.search_via_service(&input, &options)? {
+            Some(response) => search_daemon::SearchOutcome {
+                compiled: service.compile(&input),
+                response,
+            },
+            None => {
+                if !cli.quiet && !cli.json {
+                    eprintln!(
+                        "note: the index service is not running; searching in-process instead"
+                    );
+                }
+                service.search_detailed(&input, &options)
+            }
+        }
+    } else {
+        service.search_detailed(&input, &options)
+    };
     if let Some(sort) = cli.sort.as_deref() {
         let sort = Sort::parse(sort).ok_or_else(|| {
             LceError::Search(search_core::SearchError::InvalidQuery {

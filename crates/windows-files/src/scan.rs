@@ -316,15 +316,11 @@ mod tests {
     fn config_for(root: &Path) -> IndexConfig {
         let drive = 'C';
         IndexConfig {
-            volumes: vec![VolumeSpec {
-                root: root.to_string_lossy().to_string(),
+            volumes: vec![VolumeSpec::synthetic(
+                root.to_string_lossy().to_string(),
                 drive,
-                file_system: "NTFS".into(),
-                is_ntfs: true,
-                total_bytes: None,
-                free_bytes: None,
-                needs_elevation: false,
-            }],
+                true,
+            )],
             max_entries: 10_000,
             excluded_dir_names: vec!["skipme".into()],
             excluded_path_fragments: Vec::new(),

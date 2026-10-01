@@ -25,3 +25,6 @@ windows-sys = { workspace = true, features = [
   "Win32_System_WindowsProgramming",
   "Win32_System_SystemInformation",
 ] }
+[dev-dependencies]
+serde_json.workspace = true
+query-dsl.workspace = true

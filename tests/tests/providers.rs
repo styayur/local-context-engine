@@ -19,15 +19,11 @@ use windows_windows::WindowProvider;
 /// developer machine's real layout.
 fn provider_for(tree: &TempTree) -> FileProvider {
     let config = IndexConfig {
-        volumes: vec![VolumeSpec {
-            root: tree.root().to_string_lossy().to_string(),
-            drive: 'C',
-            file_system: "NTFS".into(),
-            is_ntfs: true,
-            total_bytes: None,
-            free_bytes: None,
-            needs_elevation: false,
-        }],
+        volumes: vec![VolumeSpec::synthetic(
+            tree.root().to_string_lossy().to_string(),
+            'C',
+            true,
+        )],
         max_entries: 10_000,
         excluded_dir_names: IndexConfig::default_exclusions(),
         excluded_path_fragments: Vec::new(),
@@ -193,15 +189,11 @@ fn an_indexed_tree_survives_a_restart() {
     let label = format!("it-{}", tree.root().file_name().unwrap().to_string_lossy());
 
     let config = IndexConfig {
-        volumes: vec![VolumeSpec {
-            root: tree.root().to_string_lossy().to_string(),
-            drive: 'C',
-            file_system: "NTFS".into(),
-            is_ntfs: true,
-            total_bytes: None,
-            free_bytes: None,
-            needs_elevation: false,
-        }],
+        volumes: vec![VolumeSpec::synthetic(
+            tree.root().to_string_lossy().to_string(),
+            'C',
+            true,
+        )],
         ..IndexConfig::default()
     };
 

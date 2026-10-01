@@ -4,6 +4,18 @@
 //! written with MessagePack, which is compact and fast, and every write goes
 //! through a temporary file plus rename so an interrupted save can never leave
 //! a half-written cache behind.
+//!
+//! ## Schema history
+//!
+//! | version | contents                                                     |
+//! |---------|--------------------------------------------------------------|
+//! | 1       | store + a single optional `JournalState` (v0.1)              |
+//! | 2       | store + a per-volume `JournalRegistry`                       |
+//! | 3       | store + per-volume journals + search accelerators (v0.2)     |
+//!
+//! An older cache is **never** migrated in place. A version mismatch means
+//! "discard and rebuild", because guessing at the meaning of a cursor written
+//! by an older build is exactly how a silently stale index happens.
 
 use std::path::{Path, PathBuf};
 
@@ -11,17 +23,17 @@ use serde::{Deserialize, Serialize};
 
 use search_core::{clock, IndexError, LceError};
 
-use crate::mft::JournalState;
+use crate::accelerators::SearchAccelerators;
+use crate::journal::JournalRegistry;
 use crate::store::FileStore;
 
-/// Bumped whenever [`FileStore`]'s on-disk shape changes. A mismatch is not an
-/// error: it simply means the cache is ignored and rebuilt.
-pub const CACHE_FORMAT_VERSION: u32 = 1;
+/// Bumped whenever the on-disk shape changes. See the table above.
+pub const CACHE_FORMAT_VERSION: u32 = 3;
 
 /// Everything that has to survive a restart.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PersistedIndex {
-    /// Format version, see [`CACHE_FORMAT_VERSION`].
+    /// Cache format version, see [`CACHE_FORMAT_VERSION`].
     pub version: u32,
     /// Which backend produced the store.
     pub backend: String,
@@ -29,41 +41,62 @@ pub struct PersistedIndex {
     pub volumes: Vec<String>,
     /// When the cache was written, in Unix milliseconds.
     pub saved_at_ms: i64,
-    /// Change journal position, for the MFT backend.
-    pub journal: Option<JournalState>,
+    /// Per-volume journal cursors.
+    #[serde(default)]
+    pub journals: JournalRegistry,
     /// The index itself.
     pub store: FileStore,
+    /// Search accelerators, rebuilt automatically when absent.
+    #[serde(default)]
+    pub accelerators: Option<SearchAccelerators>,
 }
 
 impl PersistedIndex {
-    /// Wrap a store for saving.
+    /// Wrap a store for saving, building the accelerators if they are missing.
     #[must_use]
     pub fn new(
         backend: impl Into<String>,
         volumes: Vec<String>,
-        journal: Option<JournalState>,
+        journals: JournalRegistry,
         store: FileStore,
+        accelerators: SearchAccelerators,
     ) -> Self {
         Self {
             version: CACHE_FORMAT_VERSION,
             backend: backend.into(),
             volumes,
             saved_at_ms: clock::now_ms(),
-            journal,
+            journals,
             store,
+            accelerators: Some(accelerators),
         }
     }
 
     /// Whether this cache matches the running build.
+    ///
+    /// The journal registry has its own schema, so both have to agree.
     #[must_use]
     pub fn is_current(&self) -> bool {
-        self.version == CACHE_FORMAT_VERSION
+        self.version == CACHE_FORMAT_VERSION && self.journals.is_current()
     }
 
     /// How old the cache is, in milliseconds.
     #[must_use]
     pub fn age_ms(&self) -> i64 {
         (clock::now_ms() - self.saved_at_ms).max(0)
+    }
+
+    /// Consume the cache, returning its parts.
+    ///
+    /// Accelerators are rebuilt when the cache predates them, which keeps the
+    /// format change invisible to callers.
+    #[must_use]
+    pub fn into_parts(self) -> (FileStore, SearchAccelerators, JournalRegistry) {
+        let store = self.store;
+        let accelerators = self
+            .accelerators
+            .unwrap_or_else(|| SearchAccelerators::build(&store));
+        (store, accelerators, self.journals)
     }
 }
 
@@ -91,7 +124,10 @@ pub fn save(path: &Path, index: &PersistedIndex) -> Result<(), LceError> {
         std::fs::create_dir_all(parent)
             .map_err(|error| LceError::io("creating the index cache directory", &error))?;
     }
-    let encoded = rmp_serde::to_vec(index).map_err(|error| LceError::Io {
+    // Named encoding, not positional: `VolumeJournalState` skips `Option`
+    // fields when they are `None`, and a positional encoding would shift every
+    // following field and corrupt the read.
+    let encoded = rmp_serde::to_vec_named(index).map_err(|error| LceError::Io {
         action: "encoding the index cache".into(),
         detail: error.to_string(),
     })?;
@@ -125,7 +161,7 @@ pub fn load(path: &Path) -> Result<Option<PersistedIndex>, LceError> {
             tracing::warn!(
                 path = %path.display(),
                 %error,
-                "index cache is not in a readable format"
+                "index cache is not in a readable format; it will be rebuilt"
             );
             return Ok(None);
         }
@@ -134,6 +170,7 @@ pub fn load(path: &Path) -> Result<Option<PersistedIndex>, LceError> {
         tracing::info!(
             found = index.version,
             expected = CACHE_FORMAT_VERSION,
+            journal_schema = index.journals.schema_version,
             "index cache format changed; rebuilding"
         );
         return Ok(None);
@@ -155,6 +192,7 @@ pub fn remove(label: &str) -> Result<(), LceError> {
 ///
 /// `remove` only ever deletes a file this crate wrote, but the check keeps the
 /// "never delete something we did not create" invariant explicit.
+#[must_use]
 pub fn is_cache_path(path: &Path) -> bool {
     let Ok(root) = cache_root().canonicalize() else {
         return false;
@@ -175,6 +213,8 @@ pub fn unreadable(path: &Path) -> LceError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::accelerators::SearchAccelerators;
+    use crate::journal::JournalRegistry;
     use crate::store::FileStore;
 
     fn sample_store() -> FileStore {
@@ -184,11 +224,21 @@ mod tests {
         store
     }
 
+    fn unique_path(label: &str) -> PathBuf {
+        index_path(&format!("{label}-{}", std::process::id()))
+    }
+
     #[test]
     fn a_store_round_trips_through_the_cache() {
-        let label = format!("test-roundtrip-{}", std::process::id());
-        let path = index_path(&label);
-        let index = PersistedIndex::new("scan", vec!["C:".into()], None, sample_store());
+        let path = unique_path("roundtrip");
+        let store = sample_store();
+        let index = PersistedIndex::new(
+            "scan",
+            vec!["C:".into()],
+            JournalRegistry::new(),
+            store.clone(),
+            SearchAccelerators::build(&store),
+        );
         save(&path, &index).unwrap();
 
         let loaded = load(&path).unwrap().expect("cache must load");
@@ -196,6 +246,11 @@ mod tests {
         assert_eq!(loaded.store.len(), 2);
         assert_eq!(loaded.store.name(1), "report.pdf");
         assert!(loaded.is_current());
+
+        let (store, accelerators, journals) = loaded.into_parts();
+        assert_eq!(store.len(), 2);
+        assert_eq!(accelerators.extensions().lookup("pdf"), &[1]);
+        assert!(journals.is_empty());
 
         std::fs::remove_file(&path).unwrap();
     }
@@ -208,8 +263,7 @@ mod tests {
 
     #[test]
     fn a_corrupt_cache_is_reported_as_none_rather_than_failing() {
-        let label = format!("test-corrupt-{}", std::process::id());
-        let path = index_path(&label);
+        let path = unique_path("corrupt");
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(&path, b"this is not messagepack").unwrap();
         assert!(load(&path).unwrap().is_none());
@@ -217,14 +271,91 @@ mod tests {
     }
 
     #[test]
-    fn an_old_format_version_is_ignored() {
-        let label = format!("test-version-{}", std::process::id());
-        let path = index_path(&label);
-        let mut index = PersistedIndex::new("scan", vec![], None, sample_store());
-        index.version = CACHE_FORMAT_VERSION + 1;
+    fn a_v01_cache_version_is_ignored_instead_of_migrated() {
+        let path = unique_path("v1");
+        let store = sample_store();
+        let mut index = PersistedIndex::new(
+            "scan",
+            vec![],
+            JournalRegistry::new(),
+            store.clone(),
+            SearchAccelerators::build(&store),
+        );
+        // A v0.1 cache carried a single journal, not a registry.
+        index.version = 1;
+        save(&path, &index).unwrap();
+        assert!(load(&path).unwrap().is_none(), "v1 must not be trusted");
+
+        let mut future = index.clone();
+        future.version = CACHE_FORMAT_VERSION + 1;
+        save(&path, &future).unwrap();
+        assert!(load(&path).unwrap().is_none(), "v4 must not be trusted");
+        assert!(!future.is_current());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_cache_with_an_old_journal_schema_is_ignored() {
+        let path = unique_path("oldjournal");
+        let store = sample_store();
+        let mut journals = JournalRegistry::new();
+        journals.schema_version = crate::journal::JOURNAL_SCHEMA_VERSION - 1;
+        let index = PersistedIndex::new(
+            "mft-usn",
+            vec!["C:".into()],
+            journals,
+            store.clone(),
+            SearchAccelerators::build(&store),
+        );
         save(&path, &index).unwrap();
         assert!(load(&path).unwrap().is_none());
-        assert!(!index.is_current());
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn a_cache_without_accelerators_rebuilds_them_on_load() {
+        let path = unique_path("noaccel");
+        let store = sample_store();
+        let mut index = PersistedIndex::new(
+            "scan",
+            vec![],
+            JournalRegistry::new(),
+            store.clone(),
+            SearchAccelerators::build(&store),
+        );
+        index.accelerators = None;
+        save(&path, &index).unwrap();
+
+        let loaded = load(&path).unwrap().unwrap();
+        let (_, accelerators, _) = loaded.into_parts();
+        assert_eq!(accelerators.extensions().lookup("pdf"), &[1]);
+
+        std::fs::remove_file(&path).unwrap();
+    }
+
+    #[test]
+    fn per_volume_journals_survive_a_round_trip() {
+        let path = unique_path("journals");
+        let store = sample_store();
+        let mut journals = JournalRegistry::new();
+        let identity = crate::volume::identity_for_drive('C').unwrap_or_else(|| {
+            crate::volume::VolumeIdentity::new(crate::volume::VolumeId::from_serial(1), 1, "NTFS")
+        });
+        journals.register(&identity);
+        let id = identity.id.clone();
+        journals.advance(&id, 4_242, 7);
+
+        let index = PersistedIndex::new(
+            "mft-usn",
+            vec!["C:".into()],
+            journals,
+            store.clone(),
+            SearchAccelerators::build(&store),
+        );
+        save(&path, &index).unwrap();
+        let loaded = load(&path).unwrap().unwrap();
+        assert_eq!(loaded.journals.get(&id).unwrap().cursor_usn, 4_242);
+        assert_eq!(loaded.journals.get(&id).unwrap().entries, 7);
         std::fs::remove_file(&path).unwrap();
     }
 
@@ -240,9 +371,15 @@ mod tests {
 
     #[test]
     fn saving_is_atomic_and_leaves_no_temporary_file() {
-        let label = format!("test-atomic-{}", std::process::id());
-        let path = index_path(&label);
-        let index = PersistedIndex::new("scan", vec![], None, sample_store());
+        let path = unique_path("atomic");
+        let store = sample_store();
+        let index = PersistedIndex::new(
+            "scan",
+            vec![],
+            JournalRegistry::new(),
+            store.clone(),
+            SearchAccelerators::build(&store),
+        );
         save(&path, &index).unwrap();
         assert!(path.exists());
         assert!(!path.with_extension("lce-index.tmp").exists());
@@ -251,22 +388,19 @@ mod tests {
 
     #[test]
     fn a_fresh_cache_reports_its_age() {
-        let index = PersistedIndex::new("scan", vec![], None, sample_store());
+        let store = sample_store();
+        let index = PersistedIndex::new(
+            "scan",
+            vec![],
+            JournalRegistry::new(),
+            store.clone(),
+            SearchAccelerators::build(&store),
+        );
         assert!(index.age_ms() < 5_000);
     }
 
     #[test]
-    fn journal_state_is_preserved() {
-        let label = format!("test-journal-{}", std::process::id());
-        let path = index_path(&label);
-        let state = JournalState {
-            journal_id: 99,
-            next_usn: 4_242,
-        };
-        let index = PersistedIndex::new("mft-usn", vec!["C:".into()], Some(state), sample_store());
-        save(&path, &index).unwrap();
-        let loaded = load(&path).unwrap().unwrap();
-        assert_eq!(loaded.journal, Some(state));
-        std::fs::remove_file(&path).unwrap();
+    fn the_schema_version_is_three() {
+        assert_eq!(CACHE_FORMAT_VERSION, 3);
     }
 }

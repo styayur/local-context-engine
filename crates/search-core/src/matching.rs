@@ -50,6 +50,7 @@ impl Filter {
                     .is_some_and(|drive| drive == wanted)
             }
             Filter::Name(needle) => contains_ignore_case(entity.name(), needle),
+            Filter::NamePrefix(prefix) => starts_with_ignore_case(entity.name(), prefix),
             Filter::Modified(bound) => bound.satisfied_by(entity.modified_ms()),
             Filter::Created(bound) => {
                 let created = match entity {
@@ -126,6 +127,21 @@ fn state_matches(entity: &LocalEntity, wanted: &str) -> bool {
     }
 }
 
+/// Case-insensitive `starts_with`.
+#[must_use]
+pub fn starts_with_ignore_case(haystack: &str, prefix: &str) -> bool {
+    let prefix = prefix.trim();
+    if prefix.is_empty() {
+        return true;
+    }
+    if haystack.is_ascii() && prefix.is_ascii() {
+        let hay = haystack.as_bytes();
+        let wanted = prefix.as_bytes();
+        return wanted.len() <= hay.len() && hay[..wanted.len()].eq_ignore_ascii_case(wanted);
+    }
+    haystack.to_lowercase().starts_with(&prefix.to_lowercase())
+}
+
 /// Case-insensitive `contains`.
 ///
 /// ASCII-only inputs take an allocation-free byte-window path, which is what
@@ -189,6 +205,15 @@ mod tests {
         assert!(Filter::Extension(".rs".into()).matches(&entity));
         assert!(Filter::Extension("rs".into()).matches(&entity));
         assert!(!Filter::Extension("toml".into()).matches(&entity));
+    }
+
+    #[test]
+    fn name_prefix_filter_only_matches_the_beginning() {
+        let entity = file("vscode.exe", r"C:\vscode.exe", Some("exe"), 1);
+        assert!(Filter::NamePrefix("vsco".into()).matches(&entity));
+        assert!(Filter::NamePrefix("VSCO".into()).matches(&entity));
+        assert!(!Filter::NamePrefix("code".into()).matches(&entity));
+        assert!(Filter::NamePrefix(String::new()).matches(&entity));
     }
 
     #[test]

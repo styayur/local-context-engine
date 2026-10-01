@@ -1,0 +1,16 @@
+[package]
+name = "index-client"
+description = "Named Pipe client for the privileged Local Context Engine index service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+index-protocol.workspace = true
+search-core.workspace = true
+tracing.workspace = true

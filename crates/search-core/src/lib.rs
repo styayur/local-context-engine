@@ -33,7 +33,9 @@ pub use entity::{
     WindowEntry,
 };
 pub use error::{IndexError, LceError, PermissionError, PlatformError, SearchError};
-pub use matching::{contains_ignore_case, passes_filters, requested_types, wants_any};
+pub use matching::{
+    contains_ignore_case, passes_filters, requested_types, starts_with_ignore_case, wants_any,
+};
 pub use provider::{EntityProvider, ProviderStats, SnapshotScope};
 pub use query::{Filter, SearchQuery, SizeFilter, SizeOp, Sort, SortDirection, SortKey, TimeBound};
 pub use result::{

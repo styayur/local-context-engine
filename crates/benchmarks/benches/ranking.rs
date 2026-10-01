@@ -12,14 +12,14 @@ use query_dsl::QueryCompiler as _;
 use query_dsl::RuleBasedCompiler;
 use ranking::HeuristicRanker;
 use search_core::{LocalEntity, Ranker, SearchQuery};
-use windows_files::{collect_candidates, CANDIDATE_CAP};
+use windows_files::{collect_candidates_linear, CANDIDATE_CAP};
 
 const SIZES: [usize; 3] = [10_000, 100_000, 1_000_000];
 
 fn candidates(size: usize, text: &str) -> Vec<LocalEntity> {
     let store = synthetic_store(size, 0x0BAD_C0DE_1234_5678);
     let query = SearchQuery::plain(text);
-    collect_candidates(&store, &query, CANDIDATE_CAP)
+    collect_candidates_linear(&store, &query, CANDIDATE_CAP)
 }
 
 fn bench_ranking(criterion: &mut Criterion) {
@@ -118,7 +118,7 @@ fn bench_full_provider_path(criterion: &mut Criterion) {
             &store,
             |bencher, store| {
                 bencher.iter(|| {
-                    let found = collect_candidates(store, black_box(&query), CANDIDATE_CAP);
+                    let found = collect_candidates_linear(store, black_box(&query), CANDIDATE_CAP);
                     let mut total = 0.0f32;
                     for entity in &found {
                         if let Some(ranked) = ranker.score(&query, entity) {

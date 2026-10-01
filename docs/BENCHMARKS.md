@@ -162,3 +162,112 @@ Criterion writes an HTML report to `target/criterion/report/index.html`.
   conclusions about yours; `docs/BENCHMARKS.md` is a snapshot, not a promise.
 * The first iteration of any benchmark pays page faults on a cold corpus. The
   harness warms up for a second per benchmark to damp that.
+---
+
+# v0.2: accelerators and the query planner
+
+The numbers above are the **before** picture: every query walked the whole
+index. v0.2 adds an extension index, a prefix table and a trigram index, and a
+planner that picks between them.
+
+Measured on the same machine and toolchain as the table above, against the same
+synthetic corpus, with `cargo bench -p lce-benchmarks --bench accelerators`
+(Criterion, 10 samples, 3 s measurement).
+
+## The headline: selective queries no longer scan
+
+| query (100 000 entries) | plan | v0.1 linear | v0.2 | change |
+|---|---|---:|---:|---:|
+| `design-99999` (rare substring) | **trigram** | 4.48 ms | **31.6 µs** | ~140× faster |
+| `design-99999` (10 000 entries) | **trigram** | 430 µs | **1.77 µs** | ~240× faster |
+| `prefix:read` | **prefix** | 4.48 ms¹ | 2.94 ms | ~1.5× faster |
+| `ext:pdf` | **extension** | 4.48 ms¹ | 2.60 ms | ~1.7× faster |
+
+¹ The linear column for the prefix and extension rows is the same full-scan
+`rare_substring` measurement, because in v0.1 every predicate was evaluated by
+walking the index. The v0.2 rows include the planner run itself.
+
+## What did **not** get faster
+
+This is the part that matters as much as the win. These queries still plan as
+`linear`, and they cost what they cost in v0.1 — no regression, no
+improvement:
+
+| query (100 000 entries) | plan | v0.2 median |
+|---|---|---:|
+| `readme` (exact) | linear | 9.39 ms |
+| `report` (common substring) | linear | 8.70 ms |
+| `rpt` (fuzzy) | linear | 8.37 ms |
+| `report` + `ext:pdf` (combined) | linear | 7.29 ms |
+| `zzqxjw-nothing-matches` (negative) | linear | 4.48 ms |
+
+Why:
+
+* **Common trigrams are dropped.** `readme` and `report` consist of trigrams
+  that appear in a large fraction of the corpus. Indexing them would cost
+  memory and narrow nothing, so they are pruned; a query whose every trigram was
+  pruned has no candidate source and falls back to the scan.
+* **Three characters is the floor.** Fuzzy matching runs against short needles
+  where a trigram index has nothing to offer, and the scan is the honest answer.
+* **`combined` inherits the fallback.** If any one token of a multi-token query
+  cannot be accelerated, the whole query takes the linear path. Intersecting the
+  extension postings with a scan would be a worthwhile follow-up.
+
+## What the accelerators cost
+
+| measurement | 10 000 | 100 000 |
+|---|---:|---:|
+| build (`accelerated/build`) | 35.9 ms | 568 ms |
+| planning only (`accelerated/planning`) | 1.67 µs | 1.42 µs |
+
+The build cost is the price of indexing every record's **full path**: ~57 bytes
+per record at these sizes, so ~58 trigram insertions per record. It is paid once
+and persisted; the planner itself is microseconds.
+
+Memory, measured with `SearchAccelerators::stats()` on a 100 000 entry corpus:
+
+```text
+100 000 entries
+  FileStore             9.96 MB
+  SearchAccelerators    5.95 MB   (+60%)
+  ------------------------------------
+  total                15.91 MB
+
+  distinct trigrams         1 223
+  trigrams dropped            147
+  trigram postings        579 441
+  prefix table entries    100 001   (100 000 records + the volume root)
+  distinct extensions           1
+```
+
+The prefix table is the largest single contributor at 32 bytes per record; the
+trigram postings are ~5.8 per record.
+
+**This is a real cost, not a rounding error.** Extrapolating linearly, a one
+million entry index lands around 125 MB rather than the ~69 MB measured in v0.1,
+which is past the project's 100 MB goal. The v0.2 run was made at 10 000 and
+100 000 entries; the million-entry case is available with
+`LCE_BENCH_1M=1 cargo bench -p lce-benchmarks --bench accelerators`, and it is
+not run by default because building the accelerators for a million paths takes
+roughly six seconds and the suite would take an hour.
+
+Planned mitigations, in the order they are worth doing:
+
+1. Drop the prefix table when trigrams are available — a prefix of three or more
+   characters is already answerable as a trigram intersection, and the table is
+   32 bytes per record.
+2. Delta-encode the posting lists, which are sorted and dense.
+3. Shrink `PREFIX_KEY_LEN` from 24 bytes to 12, halving the table.
+
+## Reproducing
+
+```bash
+# the "before" measurement
+cargo bench -p lce-benchmarks --bench file_search
+
+# the "after" measurement
+cargo bench -p lce-benchmarks --bench accelerators
+
+# include the 1 000 000 entry corpus (slow)
+LCE_BENCH_1M=1 cargo bench -p lce-benchmarks --bench accelerators
+```

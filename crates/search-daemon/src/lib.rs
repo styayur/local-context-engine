@@ -15,11 +15,13 @@
 pub mod actions;
 pub mod config;
 pub mod service;
+pub mod service_client;
 pub mod usage_store;
 
 pub use actions::OpenTarget;
 pub use config::{settings_path, usage_path, Language, Settings, Theme};
 pub use service::{IndexStatus, SearchOptions, SearchOutcome, SearchService};
+pub use service_client::{is_available as index_service_available, ServiceStatus};
 
 pub use query_dsl::{CompileSource, CompiledQuery, QueryCompiler};
 pub use ranking::{RankingWeights, UsageEntry, UsageIndex};

@@ -13,6 +13,8 @@ workspace = true
 [dependencies]
 search-core.workspace = true
 query-dsl.workspace = true
+index-client.workspace = true
+index-protocol.workspace = true
 ranking.workspace = true
 windows-files.workspace = true
 windows-processes.workspace = true

@@ -144,6 +144,11 @@ pub enum Filter {
     Drive(char),
     /// `name:node` — substring match against the entity name.
     Name(String),
+    /// `prefix:vsco` — the entity name starts with the value.
+    ///
+    /// This is the one predicate a prefix table can answer exactly, which is
+    /// why it exists as its own filter rather than being folded into `name:`.
+    NamePrefix(String),
     /// `modified:<24h` / `modified:>2024-01-01`.
     Modified(TimeBound),
     /// `created:<7d`.
@@ -169,6 +174,7 @@ impl Filter {
             Filter::Path(value) => quote_if_needed("path", value),
             Filter::Drive(letter) => format!("drive:{letter}"),
             Filter::Name(value) => quote_if_needed("name", value),
+            Filter::NamePrefix(value) => quote_if_needed("prefix", value),
             Filter::Modified(bound) => format!("modified:{}", bound.to_dsl()),
             Filter::Created(bound) => format!("created:{}", bound.to_dsl()),
             Filter::Size(size) => format!("size:{}", size.to_dsl()),

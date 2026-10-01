@@ -11,6 +11,9 @@ members = [
     "crates/windows-windows",
     "crates/search-daemon",
     "crates/search-cli",
+    "crates/index-protocol",
+    "crates/index-client",
+    "crates/index-service",
     "crates/search-mcp",
     "crates/benchmarks",
     "tests",
@@ -31,13 +34,16 @@ default-members = [
     "crates/windows-windows",
     "crates/search-daemon",
     "crates/search-cli",
+    "crates/index-protocol",
+    "crates/index-client",
+    "crates/index-service",
     "crates/search-mcp",
     "crates/benchmarks",
     "tests",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.82"
 license = "MIT"
@@ -56,6 +62,8 @@ windows-apps = { path = "crates/windows-apps" }
 windows-services = { path = "crates/windows-services" }
 windows-windows = { path = "crates/windows-windows" }
 search-daemon = { path = "crates/search-daemon" }
+index-protocol = { path = "crates/index-protocol" }
+index-client = { path = "crates/index-client" }
 
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

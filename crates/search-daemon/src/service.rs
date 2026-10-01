@@ -239,7 +239,32 @@ impl SearchService {
         SearchOutcome { compiled, response }
     }
 
-    /// Run a query that is already structured.
+    /// Run a query through the privileged index service, when it is running.
+    ///
+    /// Returns `Ok(None)` when the service is not installed or not reachable,
+    /// which callers treat as "use the local provider" rather than a failure.
+    /// The fallback is what keeps the product usable on a machine where nobody
+    /// wants to install a service.
+    pub fn search_via_service(
+        &self,
+        input: &str,
+        options: &SearchOptions,
+    ) -> Result<Option<SearchResponse>, LceError> {
+        let settings = self.settings();
+        let limit = options
+            .limit
+            .unwrap_or(settings.result_limit)
+            .clamp(1, MAX_RESULT_LIMIT);
+        crate::service_client::search(input, &options.types, limit)
+    }
+
+    /// The index service's status, as the front ends report it.
+    #[must_use]
+    pub fn service_status(&self) -> crate::service_client::ServiceStatus {
+        crate::service_client::status()
+    }
+
+    /// Run a query that is already structured.    /// Run a query that is already structured.
     #[must_use]
     pub fn search_query(&self, query: &SearchQuery) -> SearchResponse {
         self.engine().search(&query.to_dsl(), query)

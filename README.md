@@ -251,7 +251,28 @@ The binaries land in `target/release/`:
 ```text
 target/release/localsearch.exe
 target/release/localsearch-mcp.exe
+target/release/lce-index-service.exe
 ```
+
+### Optional: the privileged index service (v0.2)
+
+The desktop, CLI and MCP server never need administrator rights. If you want the
+fast NTFS MFT backend, install the small service once and the front ends will use
+it automatically:
+
+```powershell
+# from an elevated prompt
+.\target\release\lce-index-service.exe install
+.\target\release\lce-index-service.exe start
+localsearch --service-status
+```
+
+The service owns the MFT and the USN journals and answers typed, versioned
+requests over a Named Pipe whose ACL is built explicitly (SYSTEM, Administrators
+and you — never Everyone or Anonymous). Without it, everything still works on the
+unprivileged directory-scan backend. See [SECURITY.md](SECURITY.md) for the
+boundary and for the one disclosure it implies: MFT enumeration can see file
+*names* an unprivileged directory walk could not.
 
 Development
 -----------

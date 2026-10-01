@@ -23,6 +23,10 @@ harness = false
 name = "ranking"
 harness = false
 
+[[bench]]
+name = "accelerators"
+harness = false
+
 [dependencies]
 search-core.workspace = true
 query-dsl.workspace = true

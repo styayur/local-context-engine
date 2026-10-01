@@ -364,9 +364,12 @@ pub fn print_report(
             let payload = serde_json::json!({
                 "action": "update",
                 "examined": report.examined,
-                "created": report.created,
-                "deleted": report.deleted,
-                "renamed": report.renamed,
+                "created": report.applied.created,
+                "deleted": report.applied.deleted,
+                "renamed": report.applied.renamed,
+                "metadata": report.applied.metadata,
+                "skipped": report.applied.skipped,
+                "volumes": report.volumes,
                 "requires_rebuild": report.requires_rebuild,
             });
             renderer.print_report(&payload)
