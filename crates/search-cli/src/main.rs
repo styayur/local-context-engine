@@ -272,6 +272,9 @@ fn run(cli: &Cli) -> Result<ExitCode, LceError> {
 
     if cli.explain {
         renderer.print_explanation(&outcome.compiled);
+        // The index planner explains itself from the same query the search
+        // just ran, so the plan and the results cannot disagree.
+        renderer.print_plan(&service.files().explain(&outcome.compiled.query));
     }
     renderer.print_response(&outcome.response)?;
 

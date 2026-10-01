@@ -29,3 +29,8 @@ pub use search_core::{
     EntityType, LceError, LocalEntity, SearchQuery, SearchResponse, SearchResult,
 };
 pub use windows_files::{IndexBackend, IndexReport};
+
+/// The query-plan type the CLI's `--explain` prints.
+pub mod windows_files_plan {
+    pub use windows_files::QueryPlanInfo;
+}

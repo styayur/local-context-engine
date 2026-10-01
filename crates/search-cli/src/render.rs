@@ -61,6 +61,38 @@ impl Renderer {
         }
     }
 
+    /// Print the index query plan, as `--explain` promises.
+    ///
+    /// The numbers come from the same planner the search itself used, so this
+    /// is a report rather than a re-derivation.
+    pub fn print_plan(&self, info: &search_daemon::windows_files_plan::QueryPlanInfo) {
+        if self.json {
+            return;
+        }
+        println!(
+            "{}",
+            self.paint(
+                DIM,
+                &format!(
+                    "plan: {}   initial candidates: {}   after filters: {}   ranked: {}",
+                    info.plan.as_str(),
+                    info.initial_candidates,
+                    info.after_filters,
+                    info.verified
+                )
+            )
+        );
+        if !info.sources.is_empty() {
+            println!(
+                "{}",
+                self.paint(DIM, &format!("  sources: {}", info.describe_sources()))
+            );
+        }
+        if let Some(note) = &info.note {
+            println!("{}", self.paint(DIM, &format!("  note: {note}")));
+        }
+    }
+
     /// Print a search response.
     pub fn print_response(&self, response: &SearchResponse) -> Result<ExitCode, LceError> {
         if self.json {
