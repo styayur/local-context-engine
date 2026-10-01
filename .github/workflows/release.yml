@@ -83,7 +83,7 @@ jobs:
           $lines | Set-Content -Encoding utf8NoBOM SHA256SUMS.txt
 
       - name: Publish the GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ inputs.version || github.ref_name }}
           generate_release_notes: true
