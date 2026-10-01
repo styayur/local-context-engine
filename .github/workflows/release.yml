@@ -1,0 +1,94 @@
+name: Release Windows build
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing tag to build, for example v0.1.0
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.version || github.ref }}
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Verify the tag is a signed-off release
+        shell: pwsh
+        run: |
+          $version = '${{ inputs.version }}'
+          if (-not $version) { $version = '${{ github.ref_name }}' }
+          if ($version -notmatch '^v\d+\.\d+\.\d+$') { throw "Tag must use vX.Y.Z: $version" }
+          git describe --exact-match --tags HEAD
+
+      - name: Validate before packaging
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --all-targets --all-features -- -D warnings
+          cargo test
+          cargo build --release
+
+      - name: Build the desktop installer
+        working-directory: apps/desktop
+        run: |
+          npm ci
+          npm run lint
+          npm run typecheck
+          npm run tauri:build
+
+      - name: Assemble the portable archive
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = '${{ inputs.version }}'
+          if (-not $version) { $version = '${{ github.ref_name }}' }
+          $stage = Join-Path $env:RUNNER_TEMP 'local-context-engine'
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item target/release/localsearch.exe $stage
+          Copy-Item target/release/localsearch-mcp.exe $stage
+          Copy-Item README.md,README.zh-CN.md,LICENSE,SECURITY.md $stage
+          $archive = "local-context-engine-windows-x64-$version.zip"
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -CompressionLevel Optimal
+
+          $installer = Get-ChildItem target/release/bundle/nsis/*.exe | Select-Object -First 1
+          Copy-Item $installer.FullName "local-context-engine-desktop-$version-setup.exe"
+
+          $lines = @()
+          $lines += (Get-FileHash -Algorithm SHA256 $archive | ForEach-Object { "$($_.Hash.ToLower())  $archive" })
+          $lines += (Get-FileHash -Algorithm SHA256 "local-context-engine-desktop-$version-setup.exe" | ForEach-Object { "$($_.Hash.ToLower())  local-context-engine-desktop-$version-setup.exe" })
+          $lines | Set-Content -Encoding utf8NoBOM SHA256SUMS.txt
+
+      - name: Publish the GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.version || github.ref_name }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            local-context-engine-windows-x64-*.zip
+            local-context-engine-desktop-*-setup.exe
+            SHA256SUMS.txt

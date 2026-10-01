@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a capability the project does not have yet
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please keep the project's core constraint in mind: the search hot path
+        must stay deterministic, offline and dependency-light.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem are you trying to solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: What have you tried instead?
+    validations:
+      required: false
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Constraints
+      options:
+        - label: This can be answered without a network call
+          required: true
+        - label: This keeps retrieval deterministic (no embeddings on the search path)
+          required: true

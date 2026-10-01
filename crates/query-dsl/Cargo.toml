@@ -1,0 +1,17 @@
+[package]
+name = "query-dsl"
+description = "Local Search DSL parser and the rule-based natural language query compiler"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+search-core.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

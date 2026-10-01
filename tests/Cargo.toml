@@ -1,0 +1,24 @@
+[package]
+name = "lce-integration-tests"
+description = "Workspace-level integration tests for Local Context Engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+search-core.workspace = true
+query-dsl.workspace = true
+ranking.workspace = true
+search-daemon.workspace = true
+windows-files.workspace = true
+windows-processes.workspace = true
+windows-apps.workspace = true
+windows-services.workspace = true
+windows-windows.workspace = true
+serde_json.workspace = true

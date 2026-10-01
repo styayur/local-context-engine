@@ -1,0 +1,27 @@
+[package]
+name = "windows-files"
+description = "Windows filesystem index backends (NTFS MFT + USN change journal, and a portable scan fallback)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+search-core.workspace = true
+serde.workspace = true
+tracing.workspace = true
+rmp-serde.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_Security",
+  "Win32_System_IO",
+  "Win32_System_WindowsProgramming",
+  "Win32_System_SystemInformation",
+] }

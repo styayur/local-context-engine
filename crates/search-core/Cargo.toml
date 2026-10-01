@@ -1,0 +1,17 @@
+[package]
+name = "search-core"
+description = "Core entity model, query model and search engine traits for Local Context Engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true

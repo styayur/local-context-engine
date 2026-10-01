@@ -1,0 +1,52 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Local Context Engine",
+  "version": "0.1.0",
+  "identifier": "dev.styayur.local-context-engine",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://127.0.0.1:5219",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Local Context Engine",
+        "width": 900,
+        "height": 580,
+        "minWidth": 560,
+        "minHeight": 360,
+        "center": true,
+        "resizable": true,
+        "fullscreen": false,
+        "decorations": true,
+        "visible": true,
+        "focus": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "category": "Utility",
+    "shortDescription": "Millisecond, offline-first search over your local system",
+    "longDescription": "Local Context Engine compiles natural language or the Local Search DSL into a structured query, then answers it from a deterministic Rust search core. No network, no telemetry, no model on the hot path.",
+    "copyright": "MIT licensed",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    }
+  }
+}

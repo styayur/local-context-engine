@@ -1,0 +1,27 @@
+[package]
+name = "search-cli"
+description = "localsearch.exe - the command line front end for Local Context Engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "localsearch"
+path = "src/main.rs"
+
+[dependencies]
+search-core.workspace = true
+query-dsl.workspace = true
+search-daemon.workspace = true
+
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true

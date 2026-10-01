@@ -1,0 +1,221 @@
+@import "tailwindcss";
+
+/*
+ * A calm, dense, developer-tool palette. Everything is driven by CSS custom
+ * properties so the light/dark switch is a class flip rather than a re-render
+ * of every component, and so no paint-blocking animation is ever needed.
+ */
+:root {
+  --lce-bg: #f6f7f9;
+  --lce-panel: #ffffff;
+  --lce-panel-muted: #f0f1f4;
+  --lce-border: #dfe2e7;
+  --lce-fg: #16181d;
+  --lce-muted: #6b7280;
+  --lce-accent: #2563eb;
+  --lce-accent-soft: rgba(37, 99, 235, 0.1);
+  --lce-danger: #dc2626;
+  --lce-danger-soft: rgba(220, 38, 38, 0.1);
+  --lce-highlight: #0ea5e9;
+}
+
+.dark {
+  --lce-bg: #0d0f13;
+  --lce-panel: #14171d;
+  --lce-panel-muted: #1b1f27;
+  --lce-border: #252a34;
+  --lce-fg: #e7e9ee;
+  --lce-muted: #8b93a3;
+  --lce-accent: #60a5fa;
+  --lce-accent-soft: rgba(96, 165, 250, 0.14);
+  --lce-danger: #f87171;
+  --lce-danger-soft: rgba(248, 113, 113, 0.14);
+  --lce-highlight: #7dd3fc;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--lce-bg);
+  color: var(--lce-fg);
+  font-family:
+    "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, "PingFang SC",
+    "Microsoft YaHei UI", sans-serif;
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+
+/* The window itself is the palette: no chrome, no title bar. */
+.lce-shell {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  height: 100%;
+  background: var(--lce-panel);
+}
+
+.lce-drag-region {
+  app-region: drag;
+}
+
+.lce-no-drag {
+  app-region: no-drag;
+}
+
+.lce-input {
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font-size: 19px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+
+.lce-input::placeholder {
+  color: var(--lce-muted);
+}
+
+.lce-row {
+  display: grid;
+  grid-template-columns: 22px 1fr auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: default;
+  border: 1px solid transparent;
+}
+
+.lce-row[data-selected="true"] {
+  background: var(--lce-accent-soft);
+  border-color: color-mix(in srgb, var(--lce-accent) 35%, transparent);
+}
+
+.lce-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--lce-border);
+  background: transparent;
+  color: var(--lce-muted);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.lce-chip[data-active="true"] {
+  background: var(--lce-accent-soft);
+  border-color: color-mix(in srgb, var(--lce-accent) 45%, transparent);
+  color: var(--lce-fg);
+}
+
+.lce-chip:focus-visible,
+.lce-row:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--lce-accent);
+  outline-offset: 1px;
+}
+
+.lce-mark {
+  color: var(--lce-highlight);
+  font-weight: 600;
+}
+
+.lce-scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--lce-border) transparent;
+}
+
+.lce-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.lce-scroll::-webkit-scrollbar-thumb {
+  background: var(--lce-border);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+.lce-menu {
+  min-width: 220px;
+  padding: 5px;
+  border-radius: 10px;
+  border: 1px solid var(--lce-border);
+  background: var(--lce-panel);
+  box-shadow: 0 14px 40px rgb(0 0 0 / 32%);
+}
+
+.lce-menu-item {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lce-menu-item:hover {
+  background: var(--lce-panel-muted);
+}
+
+.lce-menu-item[data-destructive="true"] {
+  color: var(--lce-danger);
+}
+
+.lce-menu-item[data-destructive="true"]:hover {
+  background: var(--lce-danger-soft);
+}
+
+.lce-divider {
+  margin: 5px 4px;
+  border-top: 1px solid var(--lce-border);
+}
+
+.lce-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8vh;
+  background: rgb(0 0 0 / 45%);
+  z-index: 40;
+}
+
+.lce-card {
+  width: min(680px, 92vw);
+  max-height: 76vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid var(--lce-border);
+  background: var(--lce-panel);
+  box-shadow: 0 24px 60px rgb(0 0 0 / 40%);
+}
+
+/* Explicitly opt out of motion when the user asks for it. */
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+}

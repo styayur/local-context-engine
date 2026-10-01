@@ -1,0 +1,33 @@
+[package]
+name = "search-daemon"
+description = "Composition root: wires providers, ranking, query compilation and persistence into one search service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+search-core.workspace = true
+query-dsl.workspace = true
+ranking.workspace = true
+windows-files.workspace = true
+windows-processes.workspace = true
+windows-apps.workspace = true
+windows-services.workspace = true
+windows-windows.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+rmp-serde.workspace = true
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = [
+  "Win32_Foundation",
+  "Win32_System_Threading",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }

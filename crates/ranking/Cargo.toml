@@ -1,0 +1,18 @@
+[package]
+name = "ranking"
+description = "Deterministic heuristic ranking and usage-boosted scoring for Local Context Engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+search-core.workspace = true
+serde.workspace = true
+tracing.workspace = true
+[dev-dependencies]
+serde_json.workspace = true
