@@ -16,7 +16,7 @@ Natural language in → deterministic query → Rust search core → results.
 
 [![CI](https://github.com/styayur/local-context-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/styayur/local-context-engine/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/styayur/local-context-engine?label=release&color=orange)](https://github.com/styayur/local-context-engine/releases)
-[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+[![license: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-black?logo=rust&logoColor=white)]()
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri&logoColor=white)]()
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?logo=windows&logoColor=white)]()
