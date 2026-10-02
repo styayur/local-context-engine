@@ -107,6 +107,7 @@ mod tests {
     #[test]
     fn a_client_and_server_exchange_a_handshake_over_a_real_pipe() {
         use std::sync::{Arc, Mutex};
+        use std::time::{Duration, Instant};
 
         let pipe = format!("lce-ipc-test-{}", std::process::id());
         let stop = Arc::new(AtomicBool::new(false));
@@ -128,9 +129,12 @@ mod tests {
             }
         });
 
-        // Give the server a moment to create the pipe before connecting.
+        // Service construction touches several Windows providers before the
+        // named pipe is created. Wait on a deadline rather than assuming a
+        // fixed startup latency under debug/test load.
         let mut client = None;
-        for _ in 0..50 {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while Instant::now() < deadline {
             if let Ok(candidate) = index_client::IndexClient::connect_to(&pipe) {
                 client = Some(candidate);
                 break;
