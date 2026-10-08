@@ -2,13 +2,13 @@
   <a href="./README.zh-CN.md">简体中文</a> | <strong>English</strong>
 </div>
 
-<div align="center">
 
-<img src="docs/assets/brand/app-icon.png" width="96" alt="Local Context Engine" />
+
+
 
 # Local Context Engine
 
-**Millisecond, offline-first search over your own machine.**
+Offline-first search over your own machine.
 
 Natural language in → deterministic query → Rust search core → results.
 
@@ -17,13 +17,8 @@ Natural language in → deterministic query → Rust search core → results.
 [![CI](https://github.com/styayur/local-context-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/styayur/local-context-engine/actions/workflows/ci.yml)
 [![release](https://img.shields.io/github/v/release/styayur/local-context-engine?label=release&color=orange)](https://github.com/styayur/local-context-engine/releases)
 [![license: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue)](LICENSE)
-[![Rust](https://img.shields.io/badge/Rust-black?logo=rust&logoColor=white)]()
-[![Tauri](https://img.shields.io/badge/Tauri-2-24C8D8?logo=tauri&logoColor=white)]()
-[![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-0078D6?logo=windows&logoColor=white)]()
-[![offline](https://img.shields.io/badge/offline--first-0f172a)]()
-[![no telemetry](https://img.shields.io/badge/telemetry-none-0f172a)]()
 
-</div>
+
 
 ---
 
