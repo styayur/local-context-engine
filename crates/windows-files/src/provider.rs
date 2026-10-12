@@ -1181,8 +1181,8 @@ mod tests {
         let query = SearchQuery::plain("").with_filter(Filter::Path("keep".into()));
         let hits = provider.collect(&query).unwrap();
         assert!(hits.iter().all(|entity| entity.name() != "hidden.txt"));
-        // The accelerators cannot answer a path predicate honestly.
-        assert_eq!(provider.explain(&query).plan, SearchPlan::LinearFallback);
+        // Full-path trigrams propose candidates; the path verifier is authoritative.
+        assert_eq!(provider.explain(&query).plan, SearchPlan::TrigramLookup);
     }
 
     #[test]
@@ -1461,6 +1461,11 @@ mod tests {
             "prefix:xyz",
             "type:file prefix:read",
             "studio sort:name-asc",
+            "ext:pdf re",
+            "ext:pdf path:report",
+            "ext:pdf report a",
+            "prefix:report path:report",
+            "path:年度 ext:pdf",
         ];
 
         for dsl in queries {
@@ -1478,6 +1483,37 @@ mod tests {
                 accelerated.len(),
                 reference.len()
             );
+        }
+    }
+
+    #[test]
+    fn long_unicode_and_empty_predicates_preserve_order_and_caps() {
+        let mut store = FileStore::new();
+        let root = store.push_root('C');
+        for name in [
+            "abcdefghijklmnopqrstuvwxyz-match.rs",
+            "abcdefghijklmnopqrstuvwxyz-other.rs",
+            "年度报告年度报告年度报告.rs",
+            "README.rs",
+        ] {
+            store.push_entry(root, name, 'C', false, 1, 0, 0, 0);
+        }
+        let accelerators = SearchAccelerators::build(&store);
+        for filter in [
+            Filter::NamePrefix("abcdefghijklmnopqrstuvwxyz-match".into()),
+            Filter::NamePrefix("年度报告年度报告年度".into()),
+            Filter::NamePrefix(String::new()),
+            Filter::Extension(String::new()),
+        ] {
+            let query = SearchQuery::plain("").with_filter(filter);
+            for cap in [0, 1, usize::MAX] {
+                let reference = collect_candidates_linear(&store, &query, cap);
+                let (actual, _) = collect_candidates_with_plan(&store, &accelerators, &query, cap);
+                assert_eq!(
+                    actual.iter().map(LocalEntity::id).collect::<Vec<_>>(),
+                    reference.iter().map(LocalEntity::id).collect::<Vec<_>>()
+                );
+            }
         }
     }
 

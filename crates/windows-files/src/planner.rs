@@ -9,16 +9,16 @@
 //! | query shape                | source              | exact? |
 //! |----------------------------|---------------------|--------|
 //! | `ext:rs`                   | extension postings  | yes    |
-//! | `prefix:vscode`            | prefix table        | yes    |
+//! | `prefix:vscode`            | prefix table        | superset |
 //! | a token of 3+ characters   | trigram postings    | superset |
 //! | two of the above           | intersection        | superset |
 //! | anything shorter or absent | linear scan         | yes    |
 //!
 //! "Superset" is the load-bearing word. Accelerated sources only ever *propose*
 //! candidates; the provider verifies every one of them against the real name in
-//! the [`FileStore`]. A trigram index that is stale, pruned or incomplete
-//! therefore costs time, never correctness — which is what the differential
-//! tests in `tests/` assert.
+//! the [`FileStore`]. Stale extra IDs are safe; missing live IDs are not.
+//! Dropped trigrams are tracked explicitly and mutations must publish the
+//! store and accelerators together. Differential tests enforce this contract.
 
 use std::time::Instant;
 
@@ -43,7 +43,7 @@ pub const MAX_PLANNED_CANDIDATES: usize = 250_000;
 pub enum SearchPlan {
     /// Answered entirely from the extension postings.
     ExtensionLookup,
-    /// Answered entirely from the prefix table.
+    /// Proposed by the prefix table, then verified against the full name.
     PrefixLookup,
     /// Answered from trigram postings, verified against real names.
     TrigramLookup,
@@ -69,7 +69,7 @@ impl SearchPlan {
     /// Whether the source is provably exact rather than a superset.
     #[must_use]
     pub const fn is_exact(self) -> bool {
-        matches!(self, SearchPlan::ExtensionLookup | SearchPlan::PrefixLookup)
+        matches!(self, SearchPlan::ExtensionLookup)
     }
 }
 
@@ -176,151 +176,122 @@ pub fn plan(
     let started = Instant::now();
     let mut info = QueryPlanInfo::new(SearchPlan::LinearFallback);
 
-    let tokens: Vec<String> = query
-        .text
-        .as_deref()
-        .unwrap_or("")
-        .split_whitespace()
-        .map(str::to_string)
-        .collect();
-    let extensions: Vec<String> = query
-        .filters
-        .iter()
-        .filter_map(|filter| match filter {
-            Filter::Extension(value) => Some(value.clone()),
-            _ => None,
-        })
-        .collect();
-    let prefixes: Vec<String> = query
-        .filters
-        .iter()
-        .filter_map(|filter| match filter {
-            Filter::NamePrefix(value) => Some(value.clone()),
-            _ => None,
-        })
-        .collect();
-    let has_path_filter = query
-        .filters
-        .iter()
-        .any(|filter| matches!(filter, Filter::Path(_)));
-
-    // Name-based accelerators say nothing about a path, and pretending
-    // otherwise would drop real matches.
-    if has_path_filter {
-        info.note = Some("path filters are not covered by the name accelerators".into());
-        info.elapsed_ms = elapsed_ms(started);
-        return PlannedCandidates::linear(info);
-    }
-
-    let mut sources: Vec<(String, Vec<RecordId>)> = Vec::new();
-
-    if !extensions.is_empty() {
-        let ids = accelerators.extensions().lookup_any(&extensions);
-        sources.push((format!("extension({})", extensions.join("|")), ids));
-    }
-
-    if !prefixes.is_empty() {
-        let mut ids: Vec<RecordId> = Vec::new();
-        for prefix in &prefixes {
-            ids.extend(
-                accelerators
-                    .prefixes()
-                    .lookup(prefix)
-                    .iter()
-                    .map(|entry| entry.id),
-            );
-        }
-        ids.sort_unstable();
-        ids.dedup();
-        sources.push((format!("prefix({})", prefixes.join("|")), ids));
-    }
-
-    if !tokens.is_empty() {
-        let mut trigram_ids: Option<Vec<RecordId>> = None;
-        let mut labels: Vec<String> = Vec::new();
-        for token in &tokens {
-            let normalised = normalise_key(token);
-            if normalised.len() < MIN_TRIGRAM_QUERY_LEN {
-                // Too short to narrow: anything is a candidate, so hand the
-                // whole job back to the scan rather than guessing.
-                info.note = Some(format!(
-                    "`{token}` is shorter than {MIN_TRIGRAM_QUERY_LEN} characters"
+    // Predicates are conjunctive. An unindexable predicate is left to the
+    // authoritative verifier; it must not discard other selective sources.
+    let mut sources: Vec<(String, Candidate<'_>)> = Vec::new();
+    for filter in &query.filters {
+        match filter {
+            Filter::Extension(ext) if !ext.trim_start_matches('.').is_empty() => {
+                sources.push((
+                    format!("extension({ext})"),
+                    Candidate::Posting(accelerators.extensions().lookup(ext)),
                 ));
-                info.elapsed_ms = elapsed_ms(started);
-                return PlannedCandidates::linear(info);
             }
-            let trigrams = TrigramIndex::trigrams_of(&normalised);
-            let Some(ids) = accelerators.trigrams().intersect(&trigrams) else {
-                info.note = Some(format!(
-                    "no indexed trigram for `{token}` (too common or absent)"
+            Filter::NamePrefix(prefix) if !prefix.is_empty() => {
+                sources.push((
+                    format!("prefix({prefix})"),
+                    Candidate::Prefix(accelerators.prefixes().lookup(prefix)),
                 ));
-                info.elapsed_ms = elapsed_ms(started);
-                return PlannedCandidates::linear(info);
-            };
-            labels.push(format!("trigram({token})={}", ids.len()));
-            trigram_ids = Some(match trigram_ids {
-                Some(previous) => intersect_sorted(&previous, &ids),
-                None => ids,
-            });
-            if trigram_ids.as_ref().is_some_and(Vec::is_empty) {
-                break;
             }
+            // Path filters and name filters share the full-path trigram superset.
+            Filter::Path(text) | Filter::Name(text) => {
+                add_trigrams(&mut sources, accelerators, text);
+            }
+            _ => {}
         }
-        if let Some(ids) = trigram_ids {
-            sources.push((labels.join(" "), ids));
-        }
     }
-
-    // Nothing narrowed the query: a pure `state:running` or an empty search.
-    if sources.is_empty() {
-        info.note = Some("the query has no indexed predicate".into());
-        info.elapsed_ms = elapsed_ms(started);
-        return PlannedCandidates::linear(info);
+    for token in query.text.as_deref().unwrap_or("").split_whitespace() {
+        add_trigrams(&mut sources, accelerators, token);
     }
-
-    let plan_name = match sources.len() {
-        1 => match sources[0].0.split('(').next().unwrap_or_default() {
-            "extension" => SearchPlan::ExtensionLookup,
-            "prefix" => SearchPlan::PrefixLookup,
-            _ => SearchPlan::TrigramLookup,
-        },
-        _ => SearchPlan::CandidateIntersection,
-    };
-
-    let mut ids = sources[0].1.clone();
-    for (_, next) in &sources[1..] {
-        ids = intersect_sorted(&ids, next);
-    }
-
-    info.sources = sources
-        .iter()
-        .map(|(name, ids)| PlanSource {
-            name: name.clone(),
-            candidates: ids.len(),
-        })
-        .collect();
-    info.plan = plan_name;
-    info.initial_candidates = ids.len();
-
-    if ids.len() > MAX_PLANNED_CANDIDATES {
-        info.plan = SearchPlan::LinearFallback;
-        info.note = Some(format!(
-            "{} candidates exceeds the {MAX_PLANNED_CANDIDATES} candidate budget; scanning instead",
-            ids.len()
-        ));
+    sources.sort_by_key(|(_, source)| source.len());
+    if sources.is_empty() || sources[0].1.len() > MAX_PLANNED_CANDIDATES {
+        info.note = Some("no selective indexed predicate within the candidate budget".into());
         info.initial_candidates = store.len();
         info.elapsed_ms = elapsed_ms(started);
         return PlannedCandidates::linear(info);
     }
-
-    ids.sort_unstable();
-    ids.dedup();
+    let (name, source) = sources.remove(0);
+    info.plan = match &source {
+        Candidate::Prefix(_) => SearchPlan::PrefixLookup,
+        Candidate::Posting(_) => SearchPlan::ExtensionLookup,
+        Candidate::Trigrams(_) => SearchPlan::TrigramLookup,
+    };
+    let mut ids = source.ids();
+    info.sources.push(PlanSource {
+        name,
+        candidates: ids.len(),
+    });
+    for (name, source) in sources {
+        if ids.is_empty() {
+            break;
+        }
+        // Materializing a broad source costs more than verifying a small seed.
+        // Cardinality is a cheap cost estimate; skipping is always conservative.
+        if source.len() > ids.len().saturating_mul(8) {
+            continue;
+        }
+        let next = source.ids();
+        info.sources.push(PlanSource {
+            name,
+            candidates: next.len(),
+        });
+        ids = intersect_sorted(&ids, &next);
+        if !matches!(source, Candidate::Trigrams(_)) || info.plan != SearchPlan::TrigramLookup {
+            info.plan = SearchPlan::CandidateIntersection;
+        }
+    }
     info.initial_candidates = ids.len();
     info.elapsed_ms = elapsed_ms(started);
     PlannedCandidates {
         ids,
         source: CandidateSource::Ids,
         info,
+    }
+}
+
+// Borrow large postings until the cost estimate selects them.
+enum Candidate<'a> {
+    Posting(&'a [RecordId]),
+    Prefix(&'a [crate::accelerators::PrefixEntry]),
+    Trigrams(Vec<RecordId>),
+}
+
+impl Candidate<'_> {
+    fn len(&self) -> usize {
+        match self {
+            Self::Posting(ids) => ids.len(),
+            Self::Prefix(entries) => entries.len(),
+            Self::Trigrams(ids) => ids.len(),
+        }
+    }
+    fn ids(&self) -> Vec<RecordId> {
+        match self {
+            Self::Posting(ids) => ids.to_vec(),
+            Self::Trigrams(ids) => ids.clone(),
+            Self::Prefix(entries) => {
+                let mut ids: Vec<_> = entries.iter().map(|entry| entry.id).collect();
+                ids.sort_unstable();
+                ids.dedup();
+                ids
+            }
+        }
+    }
+}
+
+fn add_trigrams<'a>(
+    sources: &mut Vec<(String, Candidate<'a>)>,
+    accelerators: &SearchAccelerators,
+    text: &str,
+) {
+    let key = normalise_key(text);
+    if key.len() < MIN_TRIGRAM_QUERY_LEN {
+        return;
+    }
+    if let Some(ids) = accelerators
+        .trigrams()
+        .intersect(&TrigramIndex::trigrams_of(&key))
+    {
+        sources.push((format!("trigram({text})"), Candidate::Trigrams(ids)));
     }
 }
 
@@ -403,7 +374,7 @@ mod tests {
         let result = planned(&store, &accelerators, "prefix:vscode");
         assert_eq!(result.info.plan, SearchPlan::PrefixLookup);
         assert_eq!(result.ids, vec![1]);
-        assert!(result.info.plan.is_exact());
+        assert!(!result.info.plan.is_exact());
     }
 
     #[test]
@@ -417,16 +388,12 @@ mod tests {
     }
 
     #[test]
-    fn a_path_filter_disables_the_name_accelerators() {
+    fn a_path_filter_keeps_usable_accelerators() {
         let store = store_with(&["alpha.rs"]);
         let accelerators = SearchAccelerators::build(&store);
         let result = planned(&store, &accelerators, r"path:projects alpha");
-        assert_eq!(result.info.plan, SearchPlan::LinearFallback);
-        assert!(result
-            .info
-            .note
-            .as_deref()
-            .is_some_and(|note| note.contains("path")));
+        assert_eq!(result.source, CandidateSource::Ids);
+        assert!(result.ids.is_empty());
     }
 
     #[test]
@@ -451,9 +418,8 @@ mod tests {
         let store = store_with(&["alpha.rs"]);
         let accelerators = SearchAccelerators::build(&store);
         let result = planned(&store, &accelerators, "zzzqxjw");
-        // No indexed trigram exists for this token, so the planner cannot know
-        // whether that is "absent" or "too common": it scans.
-        assert_eq!(result.info.plan, SearchPlan::LinearFallback);
+        assert_eq!(result.info.plan, SearchPlan::TrigramLookup);
+        assert!(result.ids.is_empty());
     }
 
     #[test]

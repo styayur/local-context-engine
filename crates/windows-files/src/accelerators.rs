@@ -3,8 +3,8 @@
 //! [`FileStore`] stays the single source of truth. These structures only ever
 //! *propose* candidates; every proposal is verified against the real name in
 //! the store before it can become a result. That separation is what makes the
-//! optimisation safe: an accelerator can be stale, incomplete or conservative
-//! and the answer is still exactly right.
+//! optimisation safe: stale extra IDs are safe, but missing live IDs are not.
+//! The store and accelerators must be updated together before publication.
 //!
 //! ```text
 //!   ext:rs           -> ExtensionIndex   (posting list, already exact)
@@ -46,8 +46,7 @@ pub type RecordId = u32;
 
 /// How many bytes of a normalized name the prefix index keeps.
 ///
-/// Longer prefixes are answered by the trigram index instead, which is exact
-/// because it is verified against the real name.
+/// Longer prefixes use the truncated key as a superset, then verify the full name.
 pub const PREFIX_KEY_LEN: usize = 24;
 
 /// Minimum length of a query token before the trigram index is worth using.
@@ -180,9 +179,10 @@ impl PrefixIndex {
                 .cmp(right.bytes())
                 .then_with(|| left.id.cmp(&right.id))
         });
+        self.entries.shrink_to_fit();
     }
 
-    /// Every record whose normalised name starts with `prefix`.
+    /// Candidates whose truncated normalised name starts with `prefix`.
     ///
     /// The prefix is normalised here rather than by the caller, because a
     /// forgotten `to_lowercase` would silently return nothing.
@@ -195,9 +195,10 @@ impl PrefixIndex {
     /// Lookup for callers that already hold normalised bytes.
     #[must_use]
     pub fn lookup_normalised(&self, prefix: &[u8]) -> &[PrefixEntry] {
-        if prefix.is_empty() || prefix.len() > PREFIX_KEY_LEN {
-            return &[];
+        if prefix.is_empty() {
+            return &self.entries;
         }
+        let prefix = &prefix[..prefix.len().min(PREFIX_KEY_LEN)];
         // Entries are sorted by key, so "starts with" is monotone after the
         // first entry that is not below the prefix: matches form one run.
         let start = self.entries.partition_point(|entry| entry.bytes() < prefix);
@@ -221,7 +222,7 @@ impl PrefixIndex {
     /// Approximate heap footprint in bytes.
     #[must_use]
     pub fn memory_bytes(&self) -> usize {
-        self.entries.len() * std::mem::size_of::<PrefixEntry>()
+        self.entries.capacity() * std::mem::size_of::<PrefixEntry>()
     }
 }
 
@@ -249,6 +250,10 @@ impl TrigramIndex {
 
     /// Insert one record's normalised name.
     pub fn insert(&mut self, normalised_name: &[u8], id: RecordId) {
+        self.insert_bounded(normalised_name, id, Self::max_df(self.documents));
+    }
+
+    fn insert_bounded(&mut self, normalised_name: &[u8], id: RecordId, max_df: usize) {
         if normalised_name.len() < MIN_TRIGRAM_QUERY_LEN {
             return;
         }
@@ -264,6 +269,10 @@ impl TrigramIndex {
             let list = self.postings.entry(trigram).or_default();
             if list.last() != Some(&id) {
                 list.push(id);
+            }
+            if list.len() > max_df {
+                self.postings.remove(&trigram);
+                self.dropped_trigrams.insert(trigram);
             }
         }
     }
@@ -315,11 +324,16 @@ impl TrigramIndex {
     /// Intersect the posting lists of `trigrams`, smallest first.
     ///
     /// Returns `None` when no trigram of the query is indexed, which means the
-    /// caller must fall back rather than conclude "no matches": an unindexed
-    /// trigram is either too common or absent, and only verification can tell
-    /// those apart.
+    /// caller must verify a broader source. A never-seen trigram instead proves
+    /// the intersection empty; dropped trigrams are tracked separately.
     #[must_use]
     pub fn intersect(&self, trigrams: &[[u8; 3]]) -> Option<Vec<RecordId>> {
+        if trigrams
+            .iter()
+            .any(|key| !self.postings.contains_key(key) && !self.dropped_trigrams.contains(key))
+        {
+            return Some(Vec::new());
+        }
         let mut lists: Vec<&[RecordId]> = trigrams
             .iter()
             .filter_map(|trigram| self.lookup(trigram))
@@ -420,8 +434,7 @@ pub struct SearchAccelerators {
 impl SearchAccelerators {
     /// Build every accelerator for an existing store.
     ///
-    /// Paths are cached while walking the store, which costs one transient
-    /// `String` per record during the build. That is a deliberate trade: the
+    /// Only directory paths are retained while walking the store. That is a trade: the
     /// alternative is walking the parent chain for every record, which is
     /// `O(entries × depth)` string work on a million entry volume.
     #[must_use]
@@ -463,9 +476,17 @@ impl SearchAccelerators {
                 .extension
                 .insert(store.extension(id).unwrap_or(""), id);
             accelerators.prefix.insert(&normalise_key(name), id);
-            accelerators.trigram.insert(&normalise_key(&path), id);
+            accelerators.trigram.insert_bounded(
+                &normalise_key(&path),
+                id,
+                TrigramIndex::max_df(store.len()),
+            );
             accelerators.dirty += 1;
-            paths.push(path);
+            paths.push(if record.is_directory() {
+                path
+            } else {
+                String::new()
+            });
         }
 
         accelerators.finish(store.len());
@@ -707,11 +728,36 @@ mod tests {
     }
 
     #[test]
-    fn intersect_reports_none_when_no_trigram_is_indexed() {
+    fn absent_trigram_proves_an_empty_candidate_set() {
         let store = store_with(&["a.txt"]);
         let accelerators = SearchAccelerators::build(&store);
         let trigrams = TrigramIndex::trigrams_of(b"zzz");
-        assert!(accelerators.trigrams().intersect(&trigrams).is_none());
+        assert_eq!(accelerators.trigrams().intersect(&trigrams), Some(vec![]));
+    }
+
+    #[test]
+    fn pruning_during_build_and_roundtrip_never_resurrects_partial_postings() {
+        let mut index = TrigramIndex::default();
+        for id in 0..2000 {
+            index.insert(b"common", id);
+        }
+        assert!(index.postings.is_empty());
+        assert!(index
+            .intersect(&TrigramIndex::trigrams_of(b"common"))
+            .is_none());
+        let bytes = rmp_serde::to_vec(&index).unwrap();
+        let mut restored: TrigramIndex = rmp_serde::from_slice(&bytes).unwrap();
+        restored.insert(b"common-new", 2000);
+        restored.finish(2001);
+        assert!(restored.lookup(b"com").is_none());
+        assert_eq!(
+            restored.intersect(&TrigramIndex::trigrams_of(b"new")),
+            Some(vec![2000])
+        );
+        assert_eq!(
+            restored.intersect(&TrigramIndex::trigrams_of(b"absent")),
+            Some(vec![])
+        );
     }
 
     #[test]
