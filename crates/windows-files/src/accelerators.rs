@@ -745,8 +745,8 @@ mod tests {
         assert!(index
             .intersect(&TrigramIndex::trigrams_of(b"common"))
             .is_none());
-        let bytes = rmp_serde::to_vec(&index).unwrap();
-        let mut restored: TrigramIndex = rmp_serde::from_slice(&bytes).unwrap();
+        let bytes = rmp_serde::to_vec(&index).expect("encode index");
+        let mut restored: TrigramIndex = rmp_serde::from_slice(&bytes).expect("decode index");
         restored.insert(b"common-new", 2000);
         restored.finish(2001);
         assert!(restored.lookup(b"com").is_none());

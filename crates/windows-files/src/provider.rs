@@ -1149,7 +1149,7 @@ mod tests {
         provider.rebuild().unwrap();
 
         let query = SearchQuery::plain("").with_filter(Filter::Extension("pdf".into()));
-        let hits = provider.collect(&query).unwrap();
+        let hits = provider.collect(&query).expect("collect query");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].name(), "a.pdf");
         assert_eq!(provider.explain(&query).plan, SearchPlan::ExtensionLookup);
@@ -1163,7 +1163,7 @@ mod tests {
         provider.rebuild().unwrap();
 
         let query = SearchQuery::plain("").with_types([EntityType::Directory]);
-        let hits = provider.collect(&query).unwrap();
+        let hits = provider.collect(&query).expect("collect query");
         assert!(!hits.is_empty());
         assert!(hits
             .iter()
@@ -1179,7 +1179,7 @@ mod tests {
         provider.rebuild().unwrap();
 
         let query = SearchQuery::plain("").with_filter(Filter::Path("keep".into()));
-        let hits = provider.collect(&query).unwrap();
+        let hits = provider.collect(&query).expect("collect query");
         assert!(hits.iter().all(|entity| entity.name() != "hidden.txt"));
         // Full-path trigrams propose candidates; the path verifier is authoritative.
         assert_eq!(provider.explain(&query).plan, SearchPlan::TrigramLookup);
@@ -1212,7 +1212,7 @@ mod tests {
             op: search_core::SizeOp::GreaterThan,
             bytes: 1_024,
         }));
-        let hits = provider.collect(&query).unwrap();
+        let hits = provider.collect(&query).expect("collect query");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].name(), "large.txt");
     }
