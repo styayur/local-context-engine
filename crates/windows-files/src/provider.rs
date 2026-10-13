@@ -1142,11 +1142,13 @@ mod tests {
 
     #[test]
     fn extension_filters_restrict_the_result_set() {
-        let tree = TempTree::new("provider-ext").unwrap();
-        tree.write("a.pdf", b"x").unwrap();
-        tree.write("b.rs", b"x").unwrap();
+        let tree = TempTree::new("provider-ext").expect("valid provider test fixture");
+        tree.write("a.pdf", b"x")
+            .expect("valid provider test fixture");
+        tree.write("b.rs", b"x")
+            .expect("valid provider test fixture");
         let provider = provider_for(&tree);
-        provider.rebuild().unwrap();
+        provider.rebuild().expect("valid provider test fixture");
 
         let query = SearchQuery::plain("").with_filter(Filter::Extension("pdf".into()));
         let hits = provider.collect(&query).expect("collect query");
@@ -1157,10 +1159,11 @@ mod tests {
 
     #[test]
     fn directory_only_queries_skip_files() {
-        let tree = TempTree::new("provider-dirs").unwrap();
-        tree.write(r"projects\code.rs", b"x").unwrap();
+        let tree = TempTree::new("provider-dirs").expect("valid provider test fixture");
+        tree.write(r"projects\code.rs", b"x")
+            .expect("valid provider test fixture");
         let provider = provider_for(&tree);
-        provider.rebuild().unwrap();
+        provider.rebuild().expect("valid provider test fixture");
 
         let query = SearchQuery::plain("").with_types([EntityType::Directory]);
         let hits = provider.collect(&query).expect("collect query");
@@ -1172,11 +1175,13 @@ mod tests {
 
     #[test]
     fn path_filters_are_applied() {
-        let tree = TempTree::new("provider-path").unwrap();
-        tree.write(r"keep\visible.txt", b"x").unwrap();
-        tree.write(r"other\hidden.txt", b"x").unwrap();
+        let tree = TempTree::new("provider-path").expect("valid provider test fixture");
+        tree.write(r"keep\visible.txt", b"x")
+            .expect("valid provider test fixture");
+        tree.write(r"other\hidden.txt", b"x")
+            .expect("valid provider test fixture");
         let provider = provider_for(&tree);
-        provider.rebuild().unwrap();
+        provider.rebuild().expect("valid provider test fixture");
 
         let query = SearchQuery::plain("").with_filter(Filter::Path("keep".into()));
         let hits = provider.collect(&query).expect("collect query");
