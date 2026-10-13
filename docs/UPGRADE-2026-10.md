@@ -62,8 +62,9 @@ after: build_ms=8908.7187,estimated_index_bytes=75796186,records=1000000; peak w
 
 Retained estimated index bytes are unchanged (75,796,186); the memory benefit
 is peak construction memory from early posting pruning and retaining directory
-paths only. The probe binary grows by 2,560 bytes. No product CLI binary size
-claim is made from that probe. The common `report` fallback has a small timing
+paths only. The probe binary grows by 2,560 bytes. A separate paired `cargo build --release --locked -p search-cli` run measured
+the actual localsearch.exe: 2,346,496 -> 2,349,568 bytes (+3,072; +0.13%).
+The original and upgraded binaries were preserved outside the checkout. The common `report` fallback has a small timing
 variation, so no speedup is claimed for that shape. All eight full-result
 comparisons pass. Cargo.toml and Cargo.lock are unchanged: zero new dependencies.
 
