@@ -16,7 +16,8 @@ failures and that ceiling can make the index incomplete. Settings live in
 `%LOCALAPPDATA%\LocalContextEngine\settings.json`, alongside local cache/usage
 data. To restrict the local index, set `indexedDrives` to drive letters such as
 `["C"]` in the existing settings file (preserving its other fields), restart the
-client and rebuild the index. Desktop settings expose the same configuration.
+client and rebuild the index. Desktop settings expose backend and entry-limit
+controls; drive selection is configured in the JSON file.
 `path:` filters query results; they do not restrict collection. The CLI has no
 `--root` option. Optional service-owned indexing has its own deployment scope;
 client settings must not be treated as a service permission boundary.
