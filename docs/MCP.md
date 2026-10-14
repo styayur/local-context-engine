@@ -1,7 +1,8 @@
 # MCP server
 
-`localsearch-mcp.exe` speaks the Model Context Protocol over stdio, so an agent
-can ask this machine a question without any network access at all.
+`localsearch-mcp.exe` speaks the Model Context Protocol over local stdio. The
+server's search needs no network access. Your MCP client or model may forward
+results to another service; its network and privacy settings are separate.
 
 ## Running it
 
