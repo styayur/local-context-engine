@@ -1142,14 +1142,16 @@ mod tests {
 
     #[test]
     fn extension_filters_restrict_the_result_set() {
-        let tree = TempTree::new("provider-ext").unwrap();
-        tree.write("a.pdf", b"x").unwrap();
-        tree.write("b.rs", b"x").unwrap();
+        let tree = TempTree::new("provider-ext").expect("valid provider test fixture");
+        tree.write("a.pdf", b"x")
+            .expect("valid provider test fixture");
+        tree.write("b.rs", b"x")
+            .expect("valid provider test fixture");
         let provider = provider_for(&tree);
-        provider.rebuild().unwrap();
+        provider.rebuild().expect("valid provider test fixture");
 
         let query = SearchQuery::plain("").with_filter(Filter::Extension("pdf".into()));
-        let hits = provider.collect(&query).unwrap();
+        let hits = provider.collect(&query).expect("collect query");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].name(), "a.pdf");
         assert_eq!(provider.explain(&query).plan, SearchPlan::ExtensionLookup);
@@ -1157,13 +1159,14 @@ mod tests {
 
     #[test]
     fn directory_only_queries_skip_files() {
-        let tree = TempTree::new("provider-dirs").unwrap();
-        tree.write(r"projects\code.rs", b"x").unwrap();
+        let tree = TempTree::new("provider-dirs").expect("valid provider test fixture");
+        tree.write(r"projects\code.rs", b"x")
+            .expect("valid provider test fixture");
         let provider = provider_for(&tree);
-        provider.rebuild().unwrap();
+        provider.rebuild().expect("valid provider test fixture");
 
         let query = SearchQuery::plain("").with_types([EntityType::Directory]);
-        let hits = provider.collect(&query).unwrap();
+        let hits = provider.collect(&query).expect("collect query");
         assert!(!hits.is_empty());
         assert!(hits
             .iter()
@@ -1172,17 +1175,19 @@ mod tests {
 
     #[test]
     fn path_filters_are_applied() {
-        let tree = TempTree::new("provider-path").unwrap();
-        tree.write(r"keep\visible.txt", b"x").unwrap();
-        tree.write(r"other\hidden.txt", b"x").unwrap();
+        let tree = TempTree::new("provider-path").expect("valid provider test fixture");
+        tree.write(r"keep\visible.txt", b"x")
+            .expect("valid provider test fixture");
+        tree.write(r"other\hidden.txt", b"x")
+            .expect("valid provider test fixture");
         let provider = provider_for(&tree);
-        provider.rebuild().unwrap();
+        provider.rebuild().expect("valid provider test fixture");
 
         let query = SearchQuery::plain("").with_filter(Filter::Path("keep".into()));
-        let hits = provider.collect(&query).unwrap();
+        let hits = provider.collect(&query).expect("collect query");
         assert!(hits.iter().all(|entity| entity.name() != "hidden.txt"));
-        // The accelerators cannot answer a path predicate honestly.
-        assert_eq!(provider.explain(&query).plan, SearchPlan::LinearFallback);
+        // Full-path trigrams propose candidates; the path verifier is authoritative.
+        assert_eq!(provider.explain(&query).plan, SearchPlan::TrigramLookup);
     }
 
     #[test]
@@ -1212,7 +1217,7 @@ mod tests {
             op: search_core::SizeOp::GreaterThan,
             bytes: 1_024,
         }));
-        let hits = provider.collect(&query).unwrap();
+        let hits = provider.collect(&query).expect("collect query");
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].name(), "large.txt");
     }
@@ -1461,6 +1466,11 @@ mod tests {
             "prefix:xyz",
             "type:file prefix:read",
             "studio sort:name-asc",
+            "ext:pdf re",
+            "ext:pdf path:report",
+            "ext:pdf report a",
+            "prefix:report path:report",
+            "path:年度 ext:pdf",
         ];
 
         for dsl in queries {
@@ -1478,6 +1488,37 @@ mod tests {
                 accelerated.len(),
                 reference.len()
             );
+        }
+    }
+
+    #[test]
+    fn long_unicode_and_empty_predicates_preserve_order_and_caps() {
+        let mut store = FileStore::new();
+        let root = store.push_root('C');
+        for name in [
+            "abcdefghijklmnopqrstuvwxyz-match.rs",
+            "abcdefghijklmnopqrstuvwxyz-other.rs",
+            "年度报告年度报告年度报告.rs",
+            "README.rs",
+        ] {
+            store.push_entry(root, name, 'C', false, 1, 0, 0, 0);
+        }
+        let accelerators = SearchAccelerators::build(&store);
+        for filter in [
+            Filter::NamePrefix("abcdefghijklmnopqrstuvwxyz-match".into()),
+            Filter::NamePrefix("年度报告年度报告年度".into()),
+            Filter::NamePrefix(String::new()),
+            Filter::Extension(String::new()),
+        ] {
+            let query = SearchQuery::plain("").with_filter(filter);
+            for cap in [0, 1, usize::MAX] {
+                let reference = collect_candidates_linear(&store, &query, cap);
+                let (actual, _) = collect_candidates_with_plan(&store, &accelerators, &query, cap);
+                assert_eq!(
+                    actual.iter().map(LocalEntity::id).collect::<Vec<_>>(),
+                    reference.iter().map(LocalEntity::id).collect::<Vec<_>>()
+                );
+            }
         }
     }
 
