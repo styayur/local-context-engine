@@ -1,0 +1,20 @@
+[package]
+name = "index-protocol"
+description = "Typed, versioned IPC protocol between the Local Context Engine front ends and the privileged index service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+search-core.workspace = true
+serde.workspace = true
+rmp-serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

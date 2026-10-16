@@ -232,3 +232,135 @@ original error goes to the log.
 | Event-driven file index| subscribe to the USN journal instead of replaying it on demand    |
 | Frameless palette mode | optional chromeless window with a custom drag handle              |
 | AI query compiler      | a second `QueryCompiler` implementation, opt-in and off by default|
+---
+
+# v0.2: per-volume state, workers, the privileged boundary and accelerators
+
+## Per-volume journal state
+
+A single `Option<JournalState>` cannot describe a machine with more than one
+NTFS volume. `C:` and `D:` have different journal identifiers, different
+cursors, and roll over independently.
+
+```rust
+pub struct JournalRegistry {
+    pub schema_version: u32,
+    pub volumes: BTreeMap<String, VolumeJournalState>,   // keyed by VolumeId
+}
+
+pub struct VolumeJournalState {
+    pub identity: VolumeIdentity,   // volume GUID + serial + mount points
+    pub journal_id: u64,
+    pub first_usn: i64,
+    pub next_usn: i64,
+    pub cursor_usn: i64,
+    pub status: VolumeSyncStatus,
+    pub has_cursor: bool,
+    pub pending_rebuild: Option<RebuildReason>,
+    // ...
+}
+```
+
+The key is a **`VolumeId`**, never a drive letter: `GetVolumeNameForVolumeMountPoint`
+gives `\\?\Volume{...}\`, which survives a re-lettering, and the serial number is
+the fallback when no GUID exists. `reconcile_identity` recognises "same disk,
+new mount point" and keeps the cursor; `observe` is the single place that decides
+incremental versus rebuild.
+
+| condition | decision |
+|---|---|
+| no cursor yet | `Rebuild { NewVolume }` |
+| journal id changed | `Rebuild { JournalRecreated }` |
+| `cursor < first_usn` | `Rebuild { CursorBeforeFirstUsn }` (rollover) |
+| `cursor > next_usn` | `Rebuild { CursorAheadOfJournal }` |
+| `cursor == next_usn` | `UpToDate` |
+| otherwise | `Incremental { from_usn }` |
+
+One volume failing, rolling over or being offline never affects another.
+
+## Event-driven workers
+
+```text
+                    IndexSupervisor
+                    ├── VolumeWorker(C:)   ── FSCTL_READ_USN_JOURNAL (blocking)
+                    ├── VolumeWorker(D:)
+                    └── VolumeWorker(...)
+```
+
+Each worker calls `FSCTL_READ_USN_JOURNAL` with a `Timeout` and a
+`BytesToWaitFor`, so the kernel holds the call open until the journal moves.
+There is no polling loop and idle CPU stays at zero. The supervisor tracks a
+lifecycle per volume (`starting` → `running` → `backing-off` → `failed` →
+`stopped`) and backs off exponentially to 30 seconds, marking **only that
+volume** degraded.
+
+Journal reads and index application are separate types:
+
+```text
+  USN_RECORD_V2  --parse-->  Vec<IndexMutation>  --apply-->  FileStore
+       (mft.rs)                  (mutation.rs)              (store.rs)
+```
+
+`read_journal_batches` performs all disk I/O and parsing with **no lock held**;
+`apply_journal_batch` takes the write lock only to apply a batch; persistence
+happens after the lock is released.
+
+## The privileged boundary
+
+```text
+Desktop ─┐
+CLI ─────┼── ordinary user
+MCP ─────┘
+     │  \\.\pipe\localsearch-index-v1   (byte mode, length-prefixed MessagePack)
+     ▼
+lce-index-service.exe ── elevated
+     ├── raw NTFS MFT
+     └── USN journals
+```
+
+The service's entire vocabulary is five requests: `Hello`, `Search`,
+`IndexStatus`, `RebuildVolume`, `Changes`. There is no `Execute`, `Shell` or
+`Command`, and a test enumerates the variants so adding one shows up in review.
+Open, reveal and terminate-process stay in the unprivileged processes.
+
+Framing is `u32 length | u32 magic | u32 version | body`, with an 8 MiB ceiling
+checked **before** the body is allocated. A wrong magic, an unknown version, a
+truncated frame or a malformed body is a clean error; the connection is dropped
+and the front end falls back to its in-process provider.
+
+## Search accelerators and the query planner
+
+```text
+ext:rs        -> ExtensionIndex   (extension -> sorted RecordId postings)
+prefix:vsco   -> PrefixIndex      (sorted 24-byte keys, binary search)
+*substring*   -> TrigramIndex     (path trigrams, intersected, then verified)
+anything else -> LinearFallback   (the v0.1 scan)
+```
+
+Three rules make this safe:
+
+1. **Accelerators only propose.** Every candidate is verified against the real
+   string in the `FileStore`, which stays the single source of truth.
+2. **The trigram index covers full paths, not names.** A token matches a record
+   when it appears in the name *or* the path, so indexing names alone would not
+   be a superset — the differential tests found exactly that bug.
+3. **A dropped trigram stays dropped.** High-frequency trigrams are pruned, and
+   a live insert must never resurrect one: a one-element posting list for a
+   trigram that appears in half the corpus silently loses matches.
+
+`planner::plan` returns the chosen plan, the sources it consulted and how many
+candidates each produced. `localsearch --explain` prints them; the accelerated
+and linear paths are asserted equal by differential tests over a randomised
+corpus, after mutations, and under the candidate cap.
+
+## Concurrency
+
+| structure | protection | held for |
+|---|---|---|
+| `FileStore` + `SearchAccelerators` | one `RwLock` | reads: a whole query; writes: one mutation batch |
+| `JournalRegistry` | inside the same `RwLock` | as above |
+| index cache file | none | written outside every lock |
+| provider caches (processes, services, windows, apps) | `Mutex` + TTL | a snapshot copy |
+
+The rule is that no disk I/O, no `DeviceIoControl` and no serialisation happens
+while the index lock is held.

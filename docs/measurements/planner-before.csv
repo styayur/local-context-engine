@@ -1,0 +1,9 @@
+query,mean_ms,p95_ms,candidates,results,correct
+zzqxjw-nothing-matches,106.405315,114.702800,0,0,true
+ext:pdf re,30.042205,34.342600,0,10445,true
+ext:pdf report,89.359563,99.741300,0,3441,true
+ext:pdf path:projects,267.683140,286.483500,0,0,true
+prefix:design report,87.849225,93.389800,0,0,true
+design-99999,2.786728,3.601800,12044,0,true
+report,8.335660,9.611400,0,50076,true
+prefix:read,4.010340,4.897600,49998,49998,true

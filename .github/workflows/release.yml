@@ -70,6 +70,7 @@ jobs:
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
           Copy-Item target/release/localsearch.exe $stage
           Copy-Item target/release/localsearch-mcp.exe $stage
+          Copy-Item target/release/lce-index-service.exe $stage
           Copy-Item README.md,README.zh-CN.md,LICENSE,SECURITY.md $stage
           $archive = "local-context-engine-windows-x64-$version.zip"
           Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $archive -CompressionLevel Optimal

@@ -1,8 +1,8 @@
 //! File index search benchmarks.
 //!
-//! These exercise `windows_files::collect_candidates` — the exact function the
-//! provider calls — so the numbers describe the shipped code path rather than a
-//! simplified stand-in.
+//! These exercise `windows_files::collect_candidates_linear` — the pre-v0.2
+//! full-scan path, kept as the "before" measurement the accelerated path is
+//! compared against in `accelerators.rs`.
 //!
 //! ```bash
 //! cargo bench -p lce-benchmarks --bench file_search
@@ -15,7 +15,7 @@ use std::time::Duration;
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use lce_benchmarks::synthetic_store;
 use search_core::{Filter, SearchQuery, SizeOp, Sort, SortKey};
-use windows_files::{collect_candidates, FileStore, CANDIDATE_CAP};
+use windows_files::{collect_candidates_linear, FileStore, CANDIDATE_CAP};
 
 /// Corpus sizes from the project's benchmark contract.
 const SIZES: [usize; 3] = [10_000, 100_000, 1_000_000];
@@ -35,7 +35,11 @@ fn bench_exact(criterion: &mut Criterion) {
             &store,
             |bencher, store| {
                 bencher.iter(|| {
-                    black_box(collect_candidates(store, black_box(&query), CANDIDATE_CAP))
+                    black_box(collect_candidates_linear(
+                        store,
+                        black_box(&query),
+                        CANDIDATE_CAP,
+                    ))
                 });
             },
         );
@@ -54,7 +58,11 @@ fn bench_prefix(criterion: &mut Criterion) {
             &store,
             |bencher, store| {
                 bencher.iter(|| {
-                    black_box(collect_candidates(store, black_box(&query), CANDIDATE_CAP))
+                    black_box(collect_candidates_linear(
+                        store,
+                        black_box(&query),
+                        CANDIDATE_CAP,
+                    ))
                 });
             },
         );
@@ -73,7 +81,11 @@ fn bench_substring(criterion: &mut Criterion) {
             &store,
             |bencher, store| {
                 bencher.iter(|| {
-                    black_box(collect_candidates(store, black_box(&query), CANDIDATE_CAP))
+                    black_box(collect_candidates_linear(
+                        store,
+                        black_box(&query),
+                        CANDIDATE_CAP,
+                    ))
                 });
             },
         );
@@ -94,7 +106,11 @@ fn bench_rare_substring(criterion: &mut Criterion) {
             &store,
             |bencher, store| {
                 bencher.iter(|| {
-                    black_box(collect_candidates(store, black_box(&query), CANDIDATE_CAP))
+                    black_box(collect_candidates_linear(
+                        store,
+                        black_box(&query),
+                        CANDIDATE_CAP,
+                    ))
                 });
             },
         );
@@ -115,7 +131,11 @@ fn bench_fuzzy(criterion: &mut Criterion) {
             &store,
             |bencher, store| {
                 bencher.iter(|| {
-                    black_box(collect_candidates(store, black_box(&query), CANDIDATE_CAP))
+                    black_box(collect_candidates_linear(
+                        store,
+                        black_box(&query),
+                        CANDIDATE_CAP,
+                    ))
                 });
             },
         );
@@ -140,7 +160,11 @@ fn bench_filters(criterion: &mut Criterion) {
             &store,
             |bencher, store| {
                 bencher.iter(|| {
-                    black_box(collect_candidates(store, black_box(&query), CANDIDATE_CAP))
+                    black_box(collect_candidates_linear(
+                        store,
+                        black_box(&query),
+                        CANDIDATE_CAP,
+                    ))
                 });
             },
         );
@@ -159,7 +183,11 @@ fn bench_path_filter(criterion: &mut Criterion) {
             &store,
             |bencher, store| {
                 bencher.iter(|| {
-                    black_box(collect_candidates(store, black_box(&query), CANDIDATE_CAP))
+                    black_box(collect_candidates_linear(
+                        store,
+                        black_box(&query),
+                        CANDIDATE_CAP,
+                    ))
                 });
             },
         );
@@ -179,7 +207,11 @@ fn bench_sort(criterion: &mut Criterion) {
             &store,
             |bencher, store| {
                 bencher.iter(|| {
-                    black_box(collect_candidates(store, black_box(&query), CANDIDATE_CAP))
+                    black_box(collect_candidates_linear(
+                        store,
+                        black_box(&query),
+                        CANDIDATE_CAP,
+                    ))
                 });
             },
         );

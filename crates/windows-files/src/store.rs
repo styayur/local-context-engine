@@ -290,6 +290,105 @@ impl FileStore {
         }
     }
 
+    /// Update the size and timestamp of a file record.
+    ///
+    /// A `None` size means the source did not know it, which must leave the
+    /// stored value alone: the USN journal has no size field, and writing a
+    /// zero there would erase a real one.
+    pub fn set_metadata(&mut self, index: u32, size: Option<u64>, modified_ms: i64) {
+        if let Some(record) = self.records.get_mut(index as usize) {
+            if let Some(size) = size {
+                if !record.is_directory() {
+                    record.size = size;
+                }
+            }
+            if modified_ms != 0 {
+                record.modified_ms = modified_ms;
+            }
+        }
+    }
+
+    /// Apply a batch of journal-derived mutations under a single lock.
+    ///
+    /// Mutations whose target cannot be resolved (an unknown parent, a delete
+    /// for a record this index never saw) are counted as `skipped` rather than
+    /// guessed at: a wrong guess here would create a phantom file.
+    pub fn apply_batch(
+        &mut self,
+        mutations: &[crate::mutation::IndexMutation],
+    ) -> crate::mutation::ApplyReport {
+        use crate::mutation::IndexMutation;
+
+        let mut report = crate::mutation::ApplyReport::default();
+        for mutation in mutations {
+            match mutation {
+                IndexMutation::Create {
+                    parent_file_id,
+                    file_id,
+                    name,
+                    is_directory,
+                    drive,
+                    size,
+                    modified_ms,
+                } => {
+                    if *file_id != 0 && self.find_by_file_id(*file_id).is_some() {
+                        // Already known: a create that follows a rename, or a
+                        // journal replay. Nothing to do.
+                        report.skipped += 1;
+                        continue;
+                    }
+                    let parent = self
+                        .find_by_file_id(*parent_file_id)
+                        .or_else(|| self.root_index(*drive));
+                    match parent {
+                        Some(parent) => {
+                            self.push_entry(
+                                parent,
+                                name,
+                                *drive,
+                                *is_directory,
+                                *size,
+                                *modified_ms,
+                                0,
+                                *file_id,
+                            );
+                            report.created += 1;
+                        }
+                        None => report.skipped += 1,
+                    }
+                }
+                IndexMutation::Delete { file_id } => match self.find_by_file_id(*file_id) {
+                    Some(index) => {
+                        self.mark_deleted(index);
+                        report.deleted += 1;
+                    }
+                    None => report.skipped += 1,
+                },
+                IndexMutation::Rename { file_id, new_name } => {
+                    match self.find_by_file_id(*file_id) {
+                        Some(index) => {
+                            self.rename(index, new_name);
+                            report.renamed += 1;
+                        }
+                        None => report.skipped += 1,
+                    }
+                }
+                IndexMutation::MetadataChanged {
+                    file_id,
+                    size,
+                    modified_ms,
+                } => match self.find_by_file_id(*file_id) {
+                    Some(index) => {
+                        self.set_metadata(index, *size, *modified_ms);
+                        report.metadata += 1;
+                    }
+                    None => report.skipped += 1,
+                },
+            }
+        }
+        report
+    }
+
     /// Give a record a new name. The arena only ever grows, so the previous
     /// name is simply left behind.
     pub fn rename(&mut self, index: u32, name: &str) {
@@ -527,6 +626,117 @@ mod tests {
         assert_eq!(extension_of("no-extension"), None);
         assert_eq!(extension_of(".gitignore"), None);
         assert_eq!(extension_of("a.verylongextensionindeed"), None);
+    }
+
+    #[test]
+    fn a_batch_creates_deletes_renames_and_updates() {
+        use crate::mutation::IndexMutation;
+
+        let mut store = FileStore::new();
+        let root = store.push_root('C');
+        let _dir = store.push_entry(root, "projects", 'C', true, 0, 0, 0, 100);
+
+        let report = store.apply_batch(&[
+            IndexMutation::Create {
+                parent_file_id: 100,
+                file_id: 101,
+                name: "new.rs".into(),
+                is_directory: false,
+                drive: 'C',
+                size: 10,
+                modified_ms: 5,
+            },
+            IndexMutation::Rename {
+                file_id: 101,
+                new_name: "renamed.rs".into(),
+            },
+            IndexMutation::MetadataChanged {
+                file_id: 101,
+                size: Some(99),
+                modified_ms: 6,
+            },
+            IndexMutation::Delete { file_id: 101 },
+        ]);
+
+        assert_eq!(report.created, 1);
+        assert_eq!(report.renamed, 1);
+        assert_eq!(report.metadata, 1);
+        assert_eq!(report.deleted, 1);
+        assert_eq!(report.skipped, 0);
+
+        // The record is tombstoned, so live lookups no longer see it, but the
+        // index it occupies is still valid for any children.
+        assert!(store.find_by_file_id(101).is_none());
+        assert_eq!(store.deleted_count(), 1);
+        assert!(store.is_consistent());
+    }
+
+    #[test]
+    fn a_create_needs_a_resolvable_parent() {
+        use crate::mutation::IndexMutation;
+        let mut store = FileStore::new();
+        store.push_root('C');
+        let report = store.apply_batch(&[IndexMutation::Create {
+            parent_file_id: 999,
+            file_id: 1,
+            name: "orphan.txt".into(),
+            is_directory: false,
+            drive: 'Z',
+            size: 0,
+            modified_ms: 0,
+        }]);
+        assert_eq!(report.skipped, 1);
+        assert_eq!(report.created, 0);
+    }
+
+    #[test]
+    fn a_create_falls_back_to_the_volume_root() {
+        use crate::mutation::IndexMutation;
+        let mut store = FileStore::new();
+        store.push_root('C');
+        let report = store.apply_batch(&[IndexMutation::Create {
+            parent_file_id: 5,
+            file_id: 42,
+            name: "top-level.txt".into(),
+            is_directory: false,
+            drive: 'C',
+            size: 3,
+            modified_ms: 0,
+        }]);
+        assert_eq!(report.created, 1);
+        let index = store.find_by_file_id(42).expect("created");
+        assert_eq!(store.path_of(index), r"C:\top-level.txt");
+    }
+
+    #[test]
+    fn updating_metadata_leaves_directories_alone() {
+        let mut store = FileStore::new();
+        let root = store.push_root('C');
+        let dir = store.push_entry(root, "folder", 'C', true, 0, 0, 0, 5);
+        store.set_metadata(dir, Some(4_096), 123);
+        let record = store.records()[dir as usize];
+        assert_eq!(record.size, 0, "a directory has no size");
+        assert_eq!(record.modified_ms, 123);
+    }
+
+    #[test]
+    fn a_replayed_create_is_skipped_rather_than_duplicated() {
+        use crate::mutation::IndexMutation;
+        let mut store = FileStore::new();
+        let root = store.push_root('C');
+        store.push_entry(root, "once.txt", 'C', false, 1, 0, 0, 77);
+
+        let report = store.apply_batch(&[IndexMutation::Create {
+            parent_file_id: 5,
+            file_id: 77,
+            name: "once.txt".into(),
+            is_directory: false,
+            drive: 'C',
+            size: 1,
+            modified_ms: 0,
+        }]);
+        assert_eq!(report.skipped, 1);
+        assert_eq!(store.len(), 2, "the replay must not add a second record");
     }
 
     #[test]

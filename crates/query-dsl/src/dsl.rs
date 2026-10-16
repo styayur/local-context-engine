@@ -129,6 +129,10 @@ pub fn parse(input: &str) -> ParseOutcome {
                 query.filters.push(Filter::Name(value.clone()));
                 true
             }
+            "prefix" | "starts" | "startswith" => {
+                query.filters.push(Filter::NamePrefix(value.clone()));
+                true
+            }
             "drive" | "volume" => {
                 if let Some(letter) = value.chars().next() {
                     query.filters.push(Filter::Drive(letter));

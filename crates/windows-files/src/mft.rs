@@ -38,9 +38,11 @@ use windows_sys::Win32::Storage::FileSystem::{
 };
 use windows_sys::Win32::System::IO::DeviceIoControl;
 
+use crate::journal::{JournalRegistry, RebuildReason, SyncDecision, VolumeSyncStatus};
+use crate::mutation::{ApplyReport, IndexMutation};
 use crate::scan::{IndexConfig, IndexReport};
 use crate::store::FileStore;
-use crate::volume::VolumeSpec;
+use crate::volume::{VolumeId, VolumeSpec};
 
 /// `FSCTL_ENUM_USN_DATA`.
 pub const FSCTL_ENUM_USN_DATA: u32 = 0x0009_00B3;
@@ -138,6 +140,15 @@ pub struct UsnRecord {
     pub name: String,
 }
 
+/// `USN_REASON_DATA_OVERWRITE`.
+pub const USN_REASON_DATA_OVERWRITE: u32 = 0x0000_0001;
+/// `USN_REASON_DATA_EXTEND`.
+pub const USN_REASON_DATA_EXTEND: u32 = 0x0000_0002;
+/// `USN_REASON_DATA_TRUNCATION`.
+pub const USN_REASON_DATA_TRUNCATION: u32 = 0x0000_0004;
+/// Any of the data-change reason bits, which mean "contents differ now".
+pub const USN_REASON_DATA_ANY: u32 =
+    USN_REASON_DATA_OVERWRITE | USN_REASON_DATA_EXTEND | USN_REASON_DATA_TRUNCATION;
 /// `USN_REASON_FILE_CREATE`.
 pub const USN_REASON_FILE_CREATE: u32 = 0x0000_0100;
 /// `USN_REASON_FILE_DELETE`.
@@ -254,33 +265,141 @@ pub struct MftOutcome {
     pub store: FileStore,
     /// What the build did.
     pub report: IndexReport,
-    /// Journal position, used for incremental updates later.
-    pub journal: Option<JournalState>,
+    /// Per-volume journal cursors, ready to persist.
+    pub journals: JournalRegistry,
 }
 
-/// Where the index stopped reading the change journal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct JournalState {
-    /// Journal identifier; a mismatch forces a full rebuild.
-    pub journal_id: u64,
-    /// USN to resume from.
+/// How a journal read should behave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct JournalReadOptions {
+    /// Whether to block until the journal has something new.
+    ///
+    /// This is what makes a worker event-driven rather than a poll loop: the
+    /// kernel holds the call open until `bytes_to_wait_for` bytes have been
+    /// written or `timeout_ms` has elapsed.
+    pub wait: bool,
+    /// Milliseconds to wait when `wait` is set.
+    pub timeout_ms: u64,
+    /// Bytes that must accumulate before the call returns when `wait` is set.
+    pub bytes_to_wait_for: u64,
+    /// Safety valve: stop after this many journal reads for one volume.
+    pub max_reads: usize,
+}
+
+impl Default for JournalReadOptions {
+    fn default() -> Self {
+        Self {
+            wait: false,
+            timeout_ms: 0,
+            bytes_to_wait_for: 0,
+            max_reads: 64,
+        }
+    }
+}
+
+impl JournalReadOptions {
+    /// Options for a blocking tail with a one second wake-up.
+    #[must_use]
+    pub const fn tailing() -> Self {
+        Self {
+            wait: true,
+            timeout_ms: 1_000,
+            bytes_to_wait_for: 1,
+            max_reads: 64,
+        }
+    }
+}
+
+/// Everything one volume's journal read produced.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VolumeBatch {
+    /// Stable volume identity.
+    pub volume_id: VolumeId,
+    /// Label for logs and the status panel.
+    pub label: String,
+    /// Drive letter the volume is currently mounted on.
+    pub drive: char,
+    /// Sync state after the read.
+    pub status: VolumeSyncStatus,
+    /// Mutations to apply, in journal order.
+    pub mutations: Vec<IndexMutation>,
+    /// Cursor to store once the mutations are applied.
     pub next_usn: i64,
+    /// Journal records examined.
+    pub examined: usize,
+    /// Set when the volume cannot be caught up incrementally.
+    pub rebuild: Option<RebuildReason>,
+}
+
+impl VolumeBatch {
+    /// Whether there is anything to do.
+    #[must_use]
+    pub fn is_noop(&self) -> bool {
+        self.rebuild.is_none() && self.mutations.is_empty()
+    }
+}
+
+/// The result of reading every volume's journal.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct JournalBatch {
+    /// One entry per NTFS volume that was read.
+    pub volumes: Vec<VolumeBatch>,
+    /// Problems that did not stop the read.
+    pub warnings: Vec<String>,
+}
+
+impl JournalBatch {
+    /// Total mutations across every volume.
+    #[must_use]
+    pub fn mutation_count(&self) -> usize {
+        self.volumes.iter().map(|batch| batch.mutations.len()).sum()
+    }
+
+    /// Volumes that need a full rebuild.
+    #[must_use]
+    pub fn rebuilds(&self) -> Vec<&VolumeBatch> {
+        self.volumes
+            .iter()
+            .filter(|batch| batch.rebuild.is_some())
+            .collect()
+    }
+
+    /// Whether every volume is up to date.
+    #[must_use]
+    pub fn is_noop(&self) -> bool {
+        self.volumes.iter().all(VolumeBatch::is_noop)
+    }
 }
 
 /// What an incremental update did.
 #[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateReport {
-    /// Records the journal reported.
+    /// Journal records examined across every volume.
     pub examined: usize,
-    /// Entries added to the index.
-    pub created: usize,
-    /// Entries tombstoned in the index.
-    pub deleted: usize,
-    /// Entries whose name changed.
-    pub renamed: usize,
-    /// Whether the journal was unreadable and a full rebuild is required.
+    /// Mutations applied to the store.
+    pub applied: ApplyReport,
+    /// Per-volume outcome, so one bad disk cannot hide behind a total.
+    pub volumes: Vec<VolumeUpdateReport>,
+    /// Whether any volume needs a full rebuild.
     pub requires_rebuild: bool,
+}
+
+/// One volume's contribution to an update.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VolumeUpdateReport {
+    /// Label of the volume.
+    pub volume: String,
+    /// Sync state after the update.
+    pub status: VolumeSyncStatus,
+    /// Journal records examined.
+    pub examined: usize,
+    /// What was applied.
+    pub applied: ApplyReport,
+    /// Why a rebuild is needed, if one is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rebuild: Option<RebuildReason>,
 }
 
 /// Whether the MFT backend can be used on this machine at all.
@@ -299,13 +418,13 @@ pub fn is_available(volumes: &[VolumeSpec]) -> bool {
 pub fn build(config: &IndexConfig) -> Result<MftOutcome, LceError> {
     let started = std::time::Instant::now();
     let mut store = FileStore::new();
-    let mut journal = None;
+    let mut journals = JournalRegistry::new();
     let mut warnings = Vec::new();
     let mut indexed_volumes = Vec::new();
     let mut truncated = false;
 
     for volume in config.volumes.iter().filter(|volume| volume.is_ntfs) {
-        match build_volume(volume, config, &mut store, &mut journal) {
+        match build_volume(volume, config, &mut store, &mut journals) {
             Ok(true) => indexed_volumes.push(volume.label()),
             Ok(false) => {
                 indexed_volumes.push(volume.label());
@@ -337,7 +456,7 @@ pub fn build(config: &IndexConfig) -> Result<MftOutcome, LceError> {
             warnings,
         },
         store,
-        journal,
+        journals,
     })
 }
 
@@ -345,7 +464,7 @@ fn build_volume(
     volume: &VolumeSpec,
     config: &IndexConfig,
     store: &mut FileStore,
-    journal: &mut Option<JournalState>,
+    journals: &mut JournalRegistry,
 ) -> Result<bool, LceError> {
     let handle = open_volume(volume.drive, GENERIC_READ).ok_or_else(|| {
         LceError::Permission(PermissionError::VolumeAccessDenied {
@@ -353,7 +472,7 @@ fn build_volume(
         })
     })?;
 
-    let result = enumerate_volume(handle, volume, config, store, journal);
+    let result = enumerate_volume(handle, volume, config, store, journals);
     // SAFETY: `handle` came from CreateFileW and is not used again.
     unsafe { CloseHandle(handle) };
     result
@@ -364,7 +483,7 @@ fn enumerate_volume(
     volume: &VolumeSpec,
     config: &IndexConfig,
     store: &mut FileStore,
-    journal: &mut Option<JournalState>,
+    journals: &mut JournalRegistry,
 ) -> Result<bool, LceError> {
     let mut entries: HashMap<u64, RawEntry> = HashMap::new();
     let mut start = MftEnumDataV0 {
@@ -441,11 +560,44 @@ fn enumerate_volume(
     }
 
     materialise(volume.drive, &entries, store);
-    *journal = query_journal(handle).ok().map(|data| JournalState {
-        journal_id: data.usn_journal_id,
-        next_usn: data.next_usn,
-    });
+
+    // Register the volume and adopt its journal. The cursor comes from a query
+    // made *after* the enumeration so that anything created while the MFT was
+    // being walked is replayed by the next incremental read rather than being
+    // silently missed; replaying a create for a record that is already indexed
+    // is a cheap no-op.
+    journals.register(&volume.identity);
+    match query_journal(handle) {
+        Ok(journal) => {
+            journals.observe(&volume.identity.id, &journal);
+            let entries = store_entries_for_drive(store, volume.drive);
+            journals.advance(&volume.identity.id, journal.next_usn, entries);
+        }
+        Err(error) => {
+            tracing::warn!(
+                volume = volume.label(),
+                code = error.code(),
+                "the change journal is unavailable; this volume needs a manual rebuild"
+            );
+            journals.mark_status(
+                &volume.identity.id,
+                VolumeSyncStatus::Stale,
+                Some("the change journal could not be queried".into()),
+            );
+        }
+    }
+
     Ok(!truncated)
+}
+
+/// Live records attributed to one drive letter.
+fn store_entries_for_drive(store: &FileStore, drive: char) -> usize {
+    let wanted = drive.to_ascii_uppercase() as u8;
+    store
+        .records()
+        .iter()
+        .filter(|record| !record.is_deleted() && record.drive == wanted)
+        .count()
 }
 /// Turn the flat FRN graph into a store with resolvable parent links.
 fn materialise(drive: char, entries: &HashMap<u64, RawEntry>, store: &mut FileStore) {
@@ -551,77 +703,144 @@ fn query_journal(handle: HANDLE) -> Result<QueryUsnJournalData, LceError> {
     Ok(data)
 }
 
-/// Apply the change journal to an existing index.
+/// Read every volume's change journal and turn what changed into mutations.
 ///
-/// Deletions are recorded as tombstones rather than removed from the store, so
-/// that parent indices stay valid. A later full rebuild compacts them away.
-pub fn update(
-    store: &mut FileStore,
+/// Disk I/O and parsing happen here, deliberately **outside** any lock the
+/// caller holds. The caller applies the returned batch under a short write
+/// lock, so a slow or wedged volume can never block a search.
+#[must_use]
+pub fn read_journal_batches(
     volumes: &[VolumeSpec],
-    state: JournalState,
-) -> Result<(UpdateReport, JournalState), LceError> {
-    let mut report = UpdateReport::default();
-    let mut next_state = state;
+    journals: &mut JournalRegistry,
+    options: JournalReadOptions,
+) -> JournalBatch {
+    let mut batch = JournalBatch::default();
 
     for volume in volumes.iter().filter(|volume| volume.is_ntfs) {
+        journals.register(&volume.identity);
+        let cursor = journals
+            .get(&volume.identity.id)
+            .map_or(0, |state| state.cursor_usn);
+
         let Some(handle) = open_volume(volume.drive, GENERIC_READ | GENERIC_WRITE) else {
-            report.requires_rebuild = true;
+            journals.mark_permission_denied(
+                &volume.identity.id,
+                "the volume handle could not be opened",
+            );
+            batch.warnings.push(format!(
+                "{}: the change journal needs administrator rights",
+                volume.label()
+            ));
+            batch.volumes.push(VolumeBatch {
+                volume_id: volume.identity.id.clone(),
+                label: volume.label(),
+                drive: volume.drive,
+                status: VolumeSyncStatus::PermissionDenied,
+                mutations: Vec::new(),
+                next_usn: cursor,
+                examined: 0,
+                rebuild: None,
+            });
             continue;
         };
 
-        let outcome = read_journal(handle, store, volume.drive, &state, &mut report);
+        let outcome = read_volume_journal(handle, volume, journals, options);
         // SAFETY: `handle` came from CreateFileW and is not used afterwards.
         unsafe { CloseHandle(handle) };
 
         match outcome {
-            Ok(next_usn) => next_state.next_usn = next_usn,
+            Ok(volume_batch) => batch.volumes.push(volume_batch),
             Err(error) => {
                 tracing::warn!(
                     volume = volume.label(),
-                    error = %error,
-                    "change journal read failed; a rebuild is required"
+                    code = error.code(),
+                    %error,
+                    "change journal read failed"
                 );
-                report.requires_rebuild = true;
+                journals.mark_status(
+                    &volume.identity.id,
+                    VolumeSyncStatus::Stale,
+                    Some(error.hint().to_string()),
+                );
+                batch
+                    .warnings
+                    .push(format!("{}: {}", volume.label(), error.hint()));
+                batch.volumes.push(VolumeBatch {
+                    volume_id: volume.identity.id.clone(),
+                    label: volume.label(),
+                    drive: volume.drive,
+                    status: VolumeSyncStatus::Stale,
+                    mutations: Vec::new(),
+                    next_usn: cursor,
+                    examined: 0,
+                    rebuild: Some(RebuildReason::ReadFailed),
+                });
             }
         }
     }
 
-    Ok((report, next_state))
+    batch
 }
 
-fn read_journal(
+fn read_volume_journal(
     handle: HANDLE,
-    store: &mut FileStore,
-    drive: char,
-    state: &JournalState,
-    report: &mut UpdateReport,
-) -> Result<i64, LceError> {
+    volume: &VolumeSpec,
+    journals: &mut JournalRegistry,
+    options: JournalReadOptions,
+) -> Result<VolumeBatch, LceError> {
     let journal = query_journal(handle)?;
-    if journal.usn_journal_id != state.journal_id {
-        return Err(LceError::Index(
-            search_core::IndexError::JournalUnavailable {
-                volume: drive.to_string(),
-            },
-        ));
-    }
+    let decision = journals.observe(&volume.identity.id, &journal);
+
+    let mut batch = VolumeBatch {
+        volume_id: volume.identity.id.clone(),
+        label: volume.label(),
+        drive: volume.drive,
+        status: VolumeSyncStatus::CatchingUp,
+        mutations: Vec::new(),
+        next_usn: journal.next_usn,
+        examined: 0,
+        rebuild: None,
+    };
+
+    let start_usn = match decision {
+        SyncDecision::UpToDate => {
+            batch.status = VolumeSyncStatus::Healthy;
+            if !options.wait {
+                // Nothing to do and nobody asked to block: the common
+                // "already caught up" case must cost exactly one ioctl.
+                return Ok(batch);
+            }
+            journal.next_usn
+        }
+        SyncDecision::Rebuild { reason } => {
+            batch.status = VolumeSyncStatus::Stale;
+            batch.rebuild = Some(reason);
+            return Ok(batch);
+        }
+        SyncDecision::Incremental { from_usn, .. } => from_usn,
+    };
 
     let mut request = ReadUsnJournalDataV0 {
-        start_usn: state.next_usn.max(journal.first_usn),
-        usn_journal_id: state.journal_id,
+        start_usn,
+        usn_journal_id: journal.usn_journal_id,
+        timeout: if options.wait {
+            options.timeout_ms.saturating_mul(10_000)
+        } else {
+            0
+        },
+        bytes_to_wait_for: if options.wait {
+            options.bytes_to_wait_for
+        } else {
+            0
+        },
         ..ReadUsnJournalDataV0::default()
     };
     let mut buffer = vec![0u8; 1024 * 1024];
-    let mut next_usn = request.start_usn;
-
-    // Build the file reference number -> record index map once per batch.
-    let mut frn_index: HashMap<u64, u32> = HashMap::new();
-    for (index, record) in store.records().iter().enumerate() {
-        if record.file_id != 0 {
-            frn_index.insert(record.file_id, index as u32);
-        }
-    }
+    let mut next_usn = start_usn;
+    let mut reads = 0usize;
 
     loop {
+        reads += 1;
         let mut returned = 0u32;
         // SAFETY: the input and output buffers are valid for the lengths passed.
         let ok = unsafe {
@@ -629,7 +848,7 @@ fn read_journal(
                 handle,
                 FSCTL_READ_USN_JOURNAL,
                 std::ptr::addr_of_mut!(request).cast(),
-                u32::try_from(std::mem::size_of::<ReadUsnJournalDataV0>()).unwrap_or(48),
+                u32::try_from(std::mem::size_of::<ReadUsnJournalDataV0>()).unwrap_or(40),
                 buffer.as_mut_ptr().cast(),
                 u32::try_from(buffer.len()).unwrap_or(u32::MAX),
                 &mut returned,
@@ -649,45 +868,10 @@ fn read_journal(
         }
 
         let records = parse_usn_records(&buffer[..returned]);
-        if records.is_empty() {
-            break;
-        }
-
+        batch.examined += records.len();
         for record in &records {
-            report.examined += 1;
-            if record.is_delete() {
-                if let Some(index) = frn_index.get(&record.file_reference_number).copied() {
-                    store.mark_deleted(index);
-                    report.deleted += 1;
-                }
-                continue;
-            }
-            if record.is_create() {
-                let parent = frn_index
-                    .get(&record.parent_file_reference_number)
-                    .copied()
-                    .or_else(|| store.root_index(drive));
-                if let Some(parent) = parent {
-                    let index = store.push_entry(
-                        parent,
-                        &record.name,
-                        drive,
-                        record.is_directory(),
-                        0,
-                        record.timestamp_ms,
-                        0,
-                        record.file_reference_number,
-                    );
-                    frn_index.insert(record.file_reference_number, index);
-                    report.created += 1;
-                }
-                continue;
-            }
-            if record.is_rename() {
-                if let Some(index) = frn_index.get(&record.file_reference_number).copied() {
-                    store.rename(index, &record.name);
-                    report.renamed += 1;
-                }
+            if let Some(mutation) = mutation_for(record, volume.drive) {
+                batch.mutations.push(mutation);
             }
         }
 
@@ -696,16 +880,95 @@ fn read_journal(
                 .try_into()
                 .unwrap_or([0u8; USN_RECORD_OFFSET]),
         );
-        if next == request.start_usn as u64 {
+        if next as i64 <= next_usn {
             break;
         }
         next_usn = next as i64;
         request.start_usn = next_usn;
+        if reads >= options.max_reads {
+            break;
+        }
     }
 
-    Ok(next_usn)
+    batch.next_usn = next_usn;
+    Ok(batch)
 }
 
+/// Turn one journal record into an index mutation.
+///
+/// Returns `None` for records this index does not act on. `USN_RECORD_V2`
+/// carries no file size, so a data change becomes a timestamp-only metadata
+/// mutation and the stored size is left alone.
+#[must_use]
+pub fn mutation_for(record: &UsnRecord, drive: char) -> Option<IndexMutation> {
+    if record.is_delete() {
+        return Some(IndexMutation::Delete {
+            file_id: record.file_reference_number,
+        });
+    }
+    if record.is_create() {
+        return Some(IndexMutation::Create {
+            parent_file_id: record.parent_file_reference_number,
+            file_id: record.file_reference_number,
+            name: record.name.clone(),
+            is_directory: record.is_directory(),
+            drive,
+            size: 0,
+            modified_ms: record.timestamp_ms,
+        });
+    }
+    if record.is_rename() {
+        return Some(IndexMutation::Rename {
+            file_id: record.file_reference_number,
+            new_name: record.name.clone(),
+        });
+    }
+    if record.reason & USN_REASON_DATA_ANY != 0 {
+        return Some(IndexMutation::MetadataChanged {
+            file_id: record.file_reference_number,
+            size: None,
+            modified_ms: record.timestamp_ms,
+        });
+    }
+    None
+}
+
+/// Apply a journal batch to the store and advance the per-volume cursors.
+///
+/// The caller owns the write lock; this function performs no I/O of its own,
+/// which is what keeps the lock hold time proportional to the batch rather than
+/// to a disk round trip.
+pub fn apply_journal_batch(
+    store: &mut FileStore,
+    journals: &mut JournalRegistry,
+    batch: &JournalBatch,
+) -> UpdateReport {
+    let mut report = UpdateReport::default();
+
+    for volume in &batch.volumes {
+        let applied = store.apply_batch(&volume.mutations);
+        report.examined += volume.examined;
+        report.applied.merge(&applied);
+
+        if let Some(reason) = volume.rebuild {
+            report.requires_rebuild = true;
+            journals.require_rebuild(&volume.volume_id, reason);
+        } else {
+            let entries = store_entries_for_drive(store, volume.drive);
+            journals.advance(&volume.volume_id, volume.next_usn, entries);
+        }
+
+        report.volumes.push(VolumeUpdateReport {
+            volume: volume.label.clone(),
+            status: volume.status,
+            examined: volume.examined,
+            applied,
+            rebuild: volume.rebuild,
+        });
+    }
+
+    report
+}
 fn open_volume(drive: char, desired_access: u32) -> Option<HANDLE> {
     let path = format!(r"\\.\{drive}:");
     let wide: Vec<u16> = path.encode_utf16().chain(std::iter::once(0)).collect();
