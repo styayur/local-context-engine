@@ -23,12 +23,12 @@ cargo test
 
 # Desktop shell
 cd apps/desktop
-npm install
+npm ci
 npm run tauri:dev
 ```
 
 You need the MSVC toolchain (Visual Studio Build Tools with "Desktop development
-with C++") plus Node 20 or newer. The desktop shell also needs WebView2, which
+with C++") plus Node 22 (the CI version). The desktop shell also needs WebView2, which
 ships with Windows 11 and is installed by the NSIS bundle otherwise.
 
 ## Before you open a pull request

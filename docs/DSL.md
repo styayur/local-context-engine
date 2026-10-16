@@ -9,7 +9,7 @@ natural language, and so that whatever compiles a query has one obvious target.
 ```text
 query  := token*
 token  := key ":" value | word
-key    := type | ext | path | name | drive | modified | created | size
+key    := type | ext | path | name | prefix | drive | modified | created | size
         | state | pid | user | visible | sort | limit
 value  := quoted | bare
 ```
@@ -26,6 +26,7 @@ than a syntax error.
 | `ext`      | `rs`, `.rs`, `pdf,toml`                                             | extension, without or with the leading dot  |
 | `path`     | any substring, quote when it has spaces                             | full-path substring                         |
 | `name`     | any substring                                                       | entity-name substring                       |
+| `prefix` | any name prefix | full prefix verified after candidate lookup |
 | `drive`    | a letter                                                            | restrict to one volume                      |
 | `modified` | `<24h`, `>7d`, `>=2024-01-01`, `<=2024-01-01`                       | last-write time                             |
 | `created`  | same operators as `modified`                                        | creation time                               |
