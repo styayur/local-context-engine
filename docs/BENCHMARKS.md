@@ -271,3 +271,4 @@ cargo bench -p lce-benchmarks --bench accelerators
 # include the 1 000 000 entry corpus (slow)
 LCE_BENCH_1M=1 cargo bench -p lce-benchmarks --bench accelerators
 ```
+See [October 2026 planner measurements](UPGRADE-2026-10.md) for the paired million-record probe, raw measurements and limitations.
