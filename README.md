@@ -1,5 +1,7 @@
 # Local Context Engine
 
+**Project stage:** Alpha. Implemented workflows have automated verification; independent installation, upgrade and sustained user validation have not been audited.
+
 **Local-first context discovery engine for Windows.** Find files, applications,
 processes, services and windows through one explainable local query.
 
