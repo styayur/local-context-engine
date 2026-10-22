@@ -4,7 +4,7 @@
   "version": "0.2.0",
   "type": "module",
   "description": "Local Context Engine desktop shell (Tauri 2 + React + TypeScript)",
-  "license": "MIT",
+  "license": "MPL-2.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
