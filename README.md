@@ -34,9 +34,15 @@ Download the [Windows x64 portable ZIP](https://github.com/styayur/local-context
 Get-FileHash <downloaded-file> -Algorithm SHA256
 ```
 
-Extract the portable archive. In PowerShell, open the directory containing `localsearch.exe` and run:
+Before the first file search, review [index scope](docs/INDEXING.md): an empty `indexedDrives` setting selects all fixed local volumes, up to the entry limit. A `path:` filter restricts results, not collection. With clients closed, edit `%LOCALAPPDATA%\LocalContextEngine\settings.json` to select drives. If it does not exist, create that directory and a UTF-8 JSON file; this example selects only C. For an existing file, change only `indexedDrives` and preserve other settings:
 
-Before the first file search, review [index scope](docs/INDEXING.md): an empty `indexedDrives` setting selects all fixed local volumes, up to the entry limit. Settings are in `%LOCALAPPDATA%\LocalContextEngine\settings.json`; set the intended drives there before collection. A `path:` filter restricts results, not collection. Preserve settings and optional `usage.json` when backing up personal preferences; the index is rebuildable local metadata.
+```json
+{"indexedDrives": ["C"]}
+```
+
+Use valid JSON; an unreadable or invalid settings file falls back to defaults. Restart clients, and rebuild an existing index after changing scope. Back up settings and optional `%LOCALAPPDATA%\LocalContextEngine\usage.json` to preserve preferences; the index is rebuildable local metadata.
+
+Extract the portable archive. In PowerShell, open the directory containing `localsearch.exe` and run:
 
 ```powershell
 .\localsearch.exe --help
@@ -115,7 +121,7 @@ The [CI workflow](.github/workflows/ci.yml) runs Rust and desktop checks on Wind
 
 ## Roadmap
 
-Before v1.0, align package versions, validate the Rust minimum, and complete fresh-install, desktop-rendering and service acceptance gates. Metadata completeness and application discovery can improve later; semantic/full-text extensions must be explicit opt-in. See [Roadmap](docs/ROADMAP.md) and [release preparation](docs/RELEASE_PREPARATION.md), which distinguish implemented workflows from experimental deployment paths and future work.
+Before publishing v1.0, update package versions together, validate the Rust minimum, and complete fresh-install, desktop-rendering and service acceptance gates. Metadata completeness and application discovery can improve later; semantic/full-text extensions must be explicit opt-in. See [Roadmap](docs/ROADMAP.md) and [release preparation](docs/RELEASE_PREPARATION.md), which distinguish implemented workflows from experimental deployment paths and future work.
 
 ## Contributing
 

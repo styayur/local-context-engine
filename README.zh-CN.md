@@ -34,9 +34,15 @@ Planner 属于文件 Provider，不是每个 Provider 的公共步骤。详见[�
 Get-FileHash <downloaded-file> -Algorithm SHA256
 ```
 
-解压便携包，在 PowerShell 中进入包含 `localsearch.exe` 的目录，运行：
+首次文件搜索前，请检查[索引范围](docs/INDEXING.md)：`indexedDrives` 为空时，会在条目上限内选择所有固定本地卷。`path:` 仅筛选结果，不限制采集。关闭客户端后，在 `%LOCALAPPDATA%\LocalContextEngine\settings.json` 选择盘符。如果文件不存在，创建该目录和 UTF-8 JSON 文件；下例仅选择 C 盘。已有文件只修改 `indexedDrives`，保留其他设置：
 
-首次文件搜索前，请检查[索引范围](docs/INDEXING.md)：`indexedDrives` 为空时，会在条目上限内选择所有固定本地卷。设置位于 `%LOCALAPPDATA%\LocalContextEngine\settings.json`，应在采集前指定目标盘符。`path:` 仅筛选结果，不限制采集。备份个人偏好时保留设置和可选的 `usage.json`；索引是可重建的本地元数据。
+```json
+{"indexedDrives": ["C"]}
+```
+
+必须使用合法 JSON，文件不可读或格式错误时会回退到默认设置。修改范围后重启客户端；已有索引需重建。备份设置及可选的 `%LOCALAPPDATA%\LocalContextEngine\usage.json` 可保留偏好；索引是可重建的本地元数据。
+
+解压便携包，在 PowerShell 中进入包含 `localsearch.exe` 的目录，运行：
 
 ```powershell
 .\localsearch.exe --help
@@ -115,7 +121,7 @@ npm run build
 
 ## 路线图
 
-v1.0 前需统一软件包版本、验证 Rust 最低版本，并完成全新安装、桌面渲染与服务验收。之后可改善元数据完整性和应用发现；语义或全文扩展必须显式选择启用。[路线图](docs/ROADMAP.md)与[发布准备](docs/RELEASE_PREPARATION.md)区分已实现流程、实验性部署路径和未来工作。
+发布 v1.0 前需一并更新各软件包版本、验证 Rust 最低版本，并完成全新安装、桌面渲染与服务验收。之后可改善元数据完整性和应用发现；语义或全文扩展必须显式选择启用。[路线图](docs/ROADMAP.md)与[发布准备](docs/RELEASE_PREPARATION.md)区分已实现流程、实验性部署路径和未来工作。
 
 ## 贡献
 
