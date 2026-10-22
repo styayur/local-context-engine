@@ -129,4 +129,4 @@ Follow [CONTRIBUTING.md](CONTRIBUTING.md) and [Development](docs/DEVELOPMENT.md)
 
 ## License
 
-The repository [LICENSE](LICENSE) and Rust workspace declare **MPL-2.0**. Desktop package metadata still says MIT; [third-party license notes](THIRD_PARTY_LICENSES.md) record that unresolved inconsistency. This documentation change does not alter licenses or package manifests. Dependencies retain their own terms; release notice completeness remains a separate review item.
+The repository [LICENSE](LICENSE), Rust workspace and desktop package metadata declare **MPL-2.0**. [Third-party license notes](THIRD_PARTY_LICENSES.md) explain the correction of stale MIT metadata after the earlier MPL adoption. Historical versions retain their existing grants, and dependencies retain their own terms; release notice completeness remains a separate review item.

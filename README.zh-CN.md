@@ -129,4 +129,4 @@ npm run build
 
 ## 许可证
 
-仓库 [LICENSE](LICENSE) 与 Rust workspace 声明 **MPL-2.0**。桌面包元数据仍写为 MIT，[第三方许可说明](THIRD_PARTY_LICENSES.md)记录了这一待解决的不一致。本次文档变更不修改许可证或包清单。依赖保留各自条款，发布声明的完整性仍需单独审核。
+仓库 [LICENSE](LICENSE)、Rust workspace 与桌面包元数据均声明 **MPL-2.0**。[第三方许可说明](THIRD_PARTY_LICENSES.md)记录了此前采用 MPL 后遗留的 MIT 元数据修正。历史版本保留既有授权，依赖也保留各自条款；发布声明的完整性仍需单独审核。

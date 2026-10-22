@@ -4,10 +4,12 @@ Local Context Engine is [MPL-2.0](LICENSE) licensed, matching the Rust workspace
 metadata. The [license text](https://www.mozilla.org/en-US/MPL/2.0/) governs the
 project; an earlier README incorrectly identified it as MIT.
 
-An unresolved packaging inconsistency remains: the desktop package manifest and
-its root lockfile entry still say MIT. No separate desktop LICENSE was found.
-Resolve and review that metadata against the intended license before v1.0.0;
-this documentation change does not silently relicense files or alter manifests.
+The desktop package and its root lockfile entry now declare MPL-2.0, matching
+the existing repository LICENSE, Rust workspace and desktop Rust crate. This
+corrects stale metadata after the earlier MPL adoption; no separate desktop
+license or external non-bot contributor was found in the review. Earlier
+versions retain any permissions already granted under their own terms. This
+alignment does not relicense dependencies or retroactively change releases.
 
 Cargo.lock and the desktop package lockfile record the dependency inventory.
 Dependencies retain their own licenses. This document is not a complete
