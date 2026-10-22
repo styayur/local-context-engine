@@ -1,137 +1,126 @@
 # Local Context Engine
 
-**Project stage:** Alpha. Implemented workflows have automated verification; independent installation, upgrade and sustained user validation have not been audited.
-
-**Local-first context discovery engine for Windows.** Find files, applications,
-processes, services and windows through one explainable local query.
-
-[![CI](https://github.com/styayur/local-context-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/styayur/local-context-engine/actions/workflows/ci.yml)
-[![License: MPL-2.0](https://img.shields.io/badge/license-MPL--2.0-blue)](LICENSE)
+Offline Windows search and local stdio MCP for files, applications, processes, services and windows.
 
 [简体中文](README.zh-CN.md) · [Download v0.2.0](https://github.com/styayur/local-context-engine/releases/tag/v0.2.0) · [Documentation](docs/README.md)
 
-Current published release: **v0.2.0**. The v1.0.0 notes are an **unreleased
-candidate**, not an available binary or a new compatibility guarantee.
+**Stage: Alpha.** Implemented workflows have regression coverage; independent installation, upgrade and sustained user validation remain outstanding. This guide describes current source. The latest published release is v0.2.0; the v1.0.0 notes are an unreleased candidate, not an available binary or compatibility guarantee.
 
-## Why Local Context Engine
+Current Rust workspace, desktop package and installer configuration declare 0.2.0. Sharing a version number with the release does not mean every default-branch change is in its binaries.
 
-A filename, an installed application and a running process can refer to the same
-work. LCE puts those local sources behind one query interface, while keeping the
-query, candidate selection and ranking inspectable. File search indexes names,
-paths and metadata rather than file contents. Normal search needs no account,
-model service or network connection.
+## Features
 
-## Features and maturity
-
-| Status | Capability | Boundary |
-|---|---|---|
-| Stable | Query DSL and English/Chinese rule-based query compilation | Explicit filters; no model-generated retrieval |
-| Stable | Query Planner with extension, prefix and full-path trigram accelerators | Exact verification remains authoritative; broad queries can scan |
-| Stable | File/directory, app, process, service and window providers | Availability and metadata depend on Windows permissions |
-| Stable | CLI, local stdio MCP, ranking explanations and index health | Same query **and snapshot/settings/usage state** give deterministic ordering |
-| Experimental | Optional privileged NTFS MFT/USN service and desktop acceptance across machines | Implemented and tested, but require deployment-specific validation; see security and roadmap |
-| Future | Full-text, semantic retrieval and model-backed query compilation | Not installed, enabled or run by default; no current implementation promise |
-
-Stable means implemented workflows with regression coverage. It does not mean
-all hardware, filesystems or desktop environments have been certified.
-
-## Architecture
+- Search local filenames, paths and metadata with an explicit DSL or English/Chinese rule-based query compilation. No account, model service or network is needed for normal search.
+- Query files/directories, apps, processes, services and windows through the same service. Inspect ranking explanations, provider health and index state.
+- Use the CLI, desktop shell or local stdio MCP adapter. The optional elevated NTFS MFT/USN service is separate from the unprivileged scan backend.
+- File-query accelerators narrow candidates before exact verification; broad queries can still scan. Deterministic ordering requires the same query, snapshot, settings and usage state.
 
 ```text
-User
-  ↓
-CLI / Desktop / MCP
-  ↓
-Search Core (via SearchService)
-  ↓
-Providers ── live Windows snapshots
-  ↓ file-provider branch
-Query Planner → Accelerators → candidate verification
-  ↓
-Ranking + deterministic ordering + explanations
+CLI / Desktop / MCP → SearchService → Providers
+                                      ├─ file: planner → accelerators → verification
+                                      └─ apps / processes / services / windows
+                                  → ranking and explanations
 ```
 
-The planner lives inside the file provider. Accelerators narrow candidates;
-providers own operating-system access. The interfaces, data flow and failure
-boundaries are described in [Architecture](docs/ARCHITECTURE.md).
+The planner belongs to the file provider, not to every provider. See [Architecture](docs/ARCHITECTURE.md) and [Query Engine](docs/QUERY_ENGINE.md). The existing [benchmark report](docs/BENCHMARKS.md) records synthetic measurements and their limits; it is not a latency guarantee.
 
-## Performance
+## Installation / Quick Start
 
-A paired synthetic **one-million-record** probe measured the following on
-Windows with Rust 1.98.1. These are local observations, not latency guarantees.
+### Published Windows packages
 
-| Measurement | Before planner optimization | After |
-|---|---:|---:|
-| Accelerator construction | 11.93 s | 8.91 s |
-| Construction process peak working set | 1005.25 MB | 258.98 MB |
-| `ext:pdf report`, mean / P95 | 89.36 / 99.74 ms | 20.95 / 23.14 ms |
-| Common `report`, mean / P95 | 8.34 / 9.61 ms | 8.47 / 9.87 ms |
-| Estimated retained accelerator bytes | 75.80 MB | 75.80 MB |
+Download the [Windows x64 portable ZIP](https://github.com/styayur/local-context-engine/releases/download/v0.2.0/local-context-engine-windows-x64-v0.2.0.zip) or [desktop installer](https://github.com/styayur/local-context-engine/releases/download/v0.2.0/local-context-engine-desktop-v0.2.0-setup.exe). Compare your file with [SHA256SUMS.txt](https://github.com/styayur/local-context-engine/releases/download/v0.2.0/SHA256SUMS.txt):
 
-The memory reduction concerns **peak construction working set**, not a reduction
-in retained index size. All eight full ordered comparisons matched the linear
-reference. See [Benchmarks](docs/BENCHMARKS.md) for every query, hardware provenance,
-sample counts, candidate limits, raw results and limitations.
+```powershell
+Get-FileHash <downloaded-file> -Algorithm SHA256
+```
 
-## Installation
+Extract the portable archive. In PowerShell, open the directory containing `localsearch.exe` and run:
 
-Download the Windows x64 portable archive or desktop installer from
-[v0.2.0](https://github.com/styayur/local-context-engine/releases/tag/v0.2.0).
-Verify the download against `SHA256SUMS.txt`. Extract the portable archive and run
-`localsearch.exe`; add its directory to `PATH` if you want the commands below.
-The desktop requires WebView2. A successful build is not a substitute for a
-working desktop smoke test on your Windows installation.
+Before the first file search, review [index scope](docs/INDEXING.md): an empty `indexedDrives` setting selects all fixed local volumes, up to the entry limit. Settings are in `%LOCALAPPDATA%\LocalContextEngine\settings.json`; set the intended drives there before collection. A `path:` filter restricts results, not collection. Preserve settings and optional `usage.json` when backing up personal preferences; the index is rebuildable local metadata.
 
-To build the CLI and MCP server from source:
+```powershell
+.\localsearch.exe --help
+.\localsearch.exe --providers
+.\localsearch.exe --backend scan "type:file ext:pdf"
+.\localsearch.exe --explain "ext:pdf report"
+.\localsearch.exe "type:process python"
+.\localsearch.exe --index-status
+```
+
+The scan backend does not require the optional privileged service. Search returns `0` for results, `1` for a valid query with no matches, and `2` for an operation that could not complete. Provider availability depends on Windows permissions; live results and relative-time filters change with the system. See the [DSL reference](docs/DSL.md) and [indexing guide](docs/INDEXING.md).
+
+For the desktop package, run the installer, then launch **Local Context Engine**. It requires WebView2 and acceptance on your actual Windows installation. Build success alone does not establish that its window renders and searches correctly.
+
+### Build current source
+
+Use Windows x64, a current stable Rust MSVC toolchain and Visual Studio C++ Build Tools. For the desktop, also use Node.js 22 (CI), npm and WebView2.
 
 ```powershell
 git clone https://github.com/styayur/local-context-engine.git
 cd local-context-engine
-git checkout v0.2.0
 cargo build --release --locked
 .\target\release\localsearch.exe --help
 ```
 
-Use a current stable Rust MSVC toolchain and Visual Studio C++ Build Tools on
-Windows. [Development](docs/DEVELOPMENT.md) covers desktop prerequisites and CI.
-An unprivileged directory scan is available without installing the optional
-index service. Read the [MFT visibility boundary](docs/SECURITY.md#mft-and-permissions)
-before choosing that service on a shared machine.
+These commands build the current default branch, not the published v0.2.0 tag. Default Cargo members include the CLI and MCP server but exclude the desktop stack. Desktop packaging and output paths are documented in [Development](docs/DEVELOPMENT.md).
 
-## Usage
+To launch the desktop from source, run `npm ci` then `npm run tauri:dev` in `apps/desktop`; Tauri opens the native window and starts its development server.
 
-```powershell
-localsearch --providers
-localsearch --backend scan "type:file ext:pdf"
-localsearch --explain "ext:pdf report"
-localsearch "prefix:read"
-localsearch "type:process python"
-localsearch "type:service state:running"
-localsearch --index-status
+### Connect an MCP client
+
+After building, `target/release/localsearch-mcp.exe` serves MCP over local stdio. Replace the example path with its absolute path in your client's configuration:
+
+```json
+{
+  "mcpServers": {
+    "localsearch": {
+      "command": "C:\\tools\\lce\\localsearch-mcp.exe"
+    }
+  }
+}
 ```
 
-Search commands return `0` for results, `1` for a valid query with no matches,
-and `2` for an operation that could not complete. Relative time filters and live
-providers naturally change with the clock and system state. Use the
-[Query Engine](docs/QUERY_ENGINE.md), [DSL reference](docs/DSL.md) and
-[MCP guide](docs/MCP.md) for filtering, JSON output and local agent integration.
+See [MCP tools and protocol examples](docs/MCP.md) for `search_system`, `compile_query` and other tools. Search itself is local; your MCP client or model may forward results to another service, under its own privacy settings.
 
-## Security and privacy
+## Testing / CI / Platform Support
 
-Search does not upload data or index file contents. Cached paths, metadata,
-settings and optional usage history remain sensitive local data. Activating a
-result opens it through Windows; process termination requires explicit
-confirmation. The optional elevated service can reveal filenames that a normal
-directory walk cannot list. It does not grant permission to read their contents.
-See [Security](docs/SECURITY.md) and [vulnerability reporting](SECURITY.md).
+[![CI](https://github.com/styayur/local-context-engine/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/styayur/local-context-engine/actions/workflows/ci.yml)
 
-## Development
+From the repository root on Windows:
 
-Read [Development](docs/DEVELOPMENT.md) and [Contributing](CONTRIBUTING.md) for
-checks and extension points. [Roadmap](docs/ROADMAP.md) separates release gates
-from future work; [Changelog](CHANGELOG.md) describes user-visible changes.
+```powershell
+cargo fmt --all -- --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+cargo build --release --locked
+```
 
-Repository license: [MPL-2.0](LICENSE). See [license notes](THIRD_PARTY_LICENSES.md)
-for the remaining desktop package metadata inconsistency before v1.0.0.
-LCE runs independently and has no runtime or
-Rust crate dependency on CodeForge Engine.
+For desktop checks, run in `apps/desktop`:
+
+```sh
+npm ci
+npm run lint
+npm run typecheck
+npm run build
+```
+
+The [CI workflow](.github/workflows/ci.yml) runs Rust and desktop checks on Windows, including `cargo check -p local-context-engine-desktop` from the repository root. [CodeForge regression](.github/workflows/codeforge-regression.yml) is an external development gate, not a runtime or Rust crate dependency. See [documentation checks](docs/DOCUMENTATION_CHECKS.md) for Markdown and link validation.
+
+## Known Limitations
+
+- Windows is the supported runtime backend; Linux runtime support is not provided. Cargo declares Rust 1.82, but CI tests current stable rather than that minimum.
+- File search indexes names, paths and metadata, not file contents. Full-text search, semantic retrieval and model-backed query compilation are future work, not current capabilities.
+- The elevated MFT/USN service and desktop need validation across machines. Earlier blank-WebView behavior is not resolved by a successful build alone. Service ACLs, journal rollover, fallback and uninstall need deployment acceptance.
+- Cached paths, metadata, settings and optional usage history are sensitive local data. The elevated service can reveal filenames that a normal directory walk cannot list; it does not grant file-content access. Read [Security](docs/SECURITY.md) before enabling it on a shared machine.
+
+## Roadmap
+
+Before v1.0, align package versions, validate the Rust minimum, and complete fresh-install, desktop-rendering and service acceptance gates. Metadata completeness and application discovery can improve later; semantic/full-text extensions must be explicit opt-in. See [Roadmap](docs/ROADMAP.md) and [release preparation](docs/RELEASE_PREPARATION.md), which distinguish implemented workflows from experimental deployment paths and future work.
+
+## Contributing
+
+Follow [CONTRIBUTING.md](CONTRIBUTING.md) and [Development](docs/DEVELOPMENT.md). Use [Issues](https://github.com/styayur/local-context-engine/issues) for reproducible bugs and [SECURITY.md](SECURITY.md) for vulnerabilities. Keep permission boundaries and English/Chinese capability statements aligned.
+
+## License
+
+The repository [LICENSE](LICENSE) and Rust workspace declare **MPL-2.0**. Desktop package metadata still says MIT; [third-party license notes](THIRD_PARTY_LICENSES.md) record that unresolved inconsistency. This documentation change does not alter licenses or package manifests. Dependencies retain their own terms; release notice completeness remains a separate review item.
