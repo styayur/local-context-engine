@@ -69,6 +69,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Verify compiler CLI and ESLint API compatibility
+        run: npm run check:toolchain
+
+      - name: Dependency security
+        run: npm audit --audit-level=moderate
+
       - name: Lint
         run: npm run lint
 

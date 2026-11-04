@@ -13,7 +13,8 @@
     "lint": "eslint .",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "tauri:build": "tauri build",
+    "check:toolchain": "node scripts/check-typescript-toolchain.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
@@ -32,8 +33,23 @@
     "eslint": "^9.17.0",
     "globals": "^17.13.0",
     "tailwindcss": "^4.0.0",
-    "typescript": "^7.0.2",
+    "typescript": "npm:@typescript/typescript6@~6.0.2",
     "typescript-eslint": "^8.18.1",
-    "vite": "^8.3.5"
+    "vite": "^8.3.5",
+    "@typescript/native": "npm:typescript@~7.0.2"
+  },
+  "overrides": {
+    "eslint": {
+      "minimatch": "11.0.4"
+    },
+    "@eslint/config-array": {
+      "minimatch": "11.0.4"
+    },
+    "@eslint/eslintrc": {
+      "minimatch": "11.0.4"
+    },
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "11.0.4"
+    }
   }
 }
