@@ -16,3 +16,5 @@
 *.ico   binary
 *.icns  binary
 *.exe   binary
+
+.github/workflows/*.lock.yml linguist-generated=true
