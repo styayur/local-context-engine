@@ -276,13 +276,7 @@ fn run(cli: &Cli) -> Result<ExitCode, LceError> {
         // just ran, so the plan and the results cannot disagree.
         renderer.print_plan(&service.files().explain(&outcome.compiled.query));
     }
-    renderer.print_response(&outcome.response)?;
-
-    Ok(if outcome.response.results.is_empty() {
-        ExitCode::from(1)
-    } else {
-        ExitCode::SUCCESS
-    })
+    renderer.print_response(&outcome.response)
 }
 
 fn parse_types(values: &[String]) -> Result<Vec<EntityType>, LceError> {
